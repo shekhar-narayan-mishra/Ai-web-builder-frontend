@@ -1,11 +1,11 @@
-import { WebContainer } from '@webcontainer/api';
-import React, { useEffect, useState } from 'react';
+import { WebContainer, type FileSystemTree, type WebContainerProcess } from '@webcontainer/api';
+import { useEffect, useRef, useState } from 'react';
 import { FileItem } from '../types';
 import { Loader2, CheckCircle, AlertCircle, Play } from 'lucide-react';
 
 interface PreviewFrameProps {
   files: FileItem[];
-  webContainer: WebContainer;
+  webContainer: WebContainer | null;
 }
 
 interface LogEntry {
@@ -22,631 +22,244 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showLogs, setShowLogs] = useState(true);
+  const runIdRef = useRef(0);
+  const logIdRef = useRef(0);
+  const installProcessRef = useRef<WebContainerProcess | null>(null);
+  const devProcessRef = useRef<WebContainerProcess | null>(null);
+  const serverReadyDisposeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!webContainer || files.length === 0) {
-      setStatus('No files to preview');
+    if (!webContainer) {
+      setStatus('Initializing WebContainer...');
       return;
     }
-    
+
+    const flattenedFiles = flattenFileItems(files);
+
+    if (flattenedFiles.length === 0) {
+      setStatus('No files to preview');
+      setUrl('');
+      setIsLoading(false);
+      setLogs([]);
+      setProgress(0);
+      setShowLogs(false);
+      return;
+    }
+
     setupProject();
   }, [webContainer, files]);
 
+  useEffect(() => {
+    return () => {
+      serverReadyDisposeRef.current?.();
+      serverReadyDisposeRef.current = null;
+      void installProcessRef.current?.kill();
+      void devProcessRef.current?.kill();
+      installProcessRef.current = null;
+      devProcessRef.current = null;
+    };
+  }, []);
+
   const addLog = (text: string, type: LogEntry['type'] = 'info') => {
+    logIdRef.current += 1;
     const newLog: LogEntry = {
-      id: Date.now(),
+      id: logIdRef.current,
       text,
       type,
       timestamp: new Date()
     };
-    setLogs(prev => [...prev.slice(-9), newLog]);
+  setLogs((prev: LogEntry[]) => [...prev.slice(-9), newLog]);
   };
 
   async function setupProject() {
     try {
+      if (!webContainer) {
+        return;
+      }
+
+      await stopRunningProcesses();
+
+      const runId = Date.now();
+      runIdRef.current = runId;
+
       setIsLoading(true);
       setUrl('');
       setLogs([]);
+  logIdRef.current = 0;
       setProgress(0);
       setShowLogs(true);
-      
-      addLog('🚀 Setting up React project...', 'info');
-      setStatus('Creating project files...');
+      setStatus('Preparing preview workspace...');
+      addLog('Setting up preview workspace', 'info');
       setProgress(10);
       
       const fileTree = createReactFileTree(files);
-      addLog('📁 Created React file structure', 'success');
+      addLog('Created React file structure', 'success');
       setProgress(25);
-      
       await webContainer.mount(fileTree);
-      addLog('📁 Files mounted to WebContainer', 'success');
+      addLog('Mounted files to WebContainer', 'success');
+      if (runIdRef.current !== runId) {
+        return;
+      }
+
       setStatus('Installing dependencies...');
       setProgress(40);
-      
-      addLog('📦 Installing React dependencies...', 'info');
+      addLog('Installing dependencies...', 'info');
+
       const installProcess = await webContainer.spawn('npm', ['install']);
-      
+      installProcessRef.current = installProcess;
+      void streamProcessOutput(installProcess, runId, line => addLog(line, 'info'));
+
       const installCode = await installProcess.exit;
+      installProcessRef.current = null;
+      if (runIdRef.current !== runId) {
+        return;
+      }
+
       setProgress(70);
       
       if (installCode !== 0) {
-        addLog('❌ Dependencies installation failed', 'error');
+        addLog('Dependencies installation failed', 'error');
         setStatus('Install failed!');
         setIsLoading(false);
         setShowLogs(true);
         return;
       }
       
-      addLog('✅ Dependencies installed successfully', 'success');
+      addLog('Dependencies installed successfully', 'success');
       setStatus('Starting React dev server...');
       setProgress(85);
-      
-      addLog('🌟 Starting React development server...', 'info');
+      addLog('Starting React development server...', 'info');
+
       const devProcess = await webContainer.spawn('npm', ['run', 'dev']);
-      
-      webContainer.on('server-ready', (port, url) => {
-        console.log('🎉 React server ready at:', url);
-        addLog('🎉 React preview is ready!', 'success');
-        setUrl(url);
-        setStatus('Ready!');
-        setProgress(100);
-        setIsLoading(false);
-        
-        setTimeout(() => {
-          setShowLogs(false);
-        }, 3000);
+      devProcessRef.current = devProcess;
+      void streamProcessOutput(devProcess, runId, line => addLog(line, 'info'));
+
+      void devProcess.exit.then((code: number) => {
+        devProcessRef.current = null;
+
+        if (runIdRef.current !== runId) {
+          return;
+        }
+
+        if (code !== 0) {
+          addLog(`Dev server exited with code ${code}`, 'error');
+          setStatus('Dev server exited unexpectedly');
+          setIsLoading(false);
+          setShowLogs(true);
+        }
+      }).catch((error: unknown) => {
+        devProcessRef.current = null;
+
+        if (runIdRef.current === runId) {
+          addLog(`Dev server exit error: ${error}`, 'error');
+          setStatus('Dev server error');
+          setIsLoading(false);
+          setShowLogs(true);
+        }
       });
-      
+
+      attachServerReadyListener(runId);
     } catch (error) {
       console.error('❌ Preview setup error:', error);
-      addLog(`❌ Setup failed: ${error}`, 'error');
+      addLog(`Setup failed: ${error}`, 'error');
       setStatus(`Error: ${error}`);
       setIsLoading(false);
       setShowLogs(true);
     }
   }
+  
+  async function stopRunningProcesses() {
+    const processes: WebContainerProcess[] = [];
+    if (installProcessRef.current) {
+      processes.push(installProcessRef.current);
+    }
+    if (devProcessRef.current) {
+      processes.push(devProcessRef.current);
+    }
 
-  function createReactFileTree(files: FileItem[]) {
-    const tree: any = {};
-    
-    tree['package.json'] = {
-      file: {
-        contents: JSON.stringify({
-          name: "ai-generated-app",
-          private: true,
-          type: "module",
-          scripts: {
-            dev: "vite --host",
-            build: "vite build"
-          },
-          dependencies: {
-            react: "^18.3.1",
-            "react-dom": "^18.3.1"
-          },
-          devDependencies: {
-            "@vitejs/plugin-react": "^4.3.1",
-            vite: "^5.4.2"
-          }
-        }, null, 2)
+    installProcessRef.current = null;
+    devProcessRef.current = null;
+
+    await Promise.all(processes.map(async process => {
+      try {
+        await process.kill();
+      } catch (error) {
+        console.error('Failed to stop WebContainer process', error);
       }
-    };
-    
-    tree['vite.config.ts'] = {
-      file: {
-        contents: `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: { 
-    host: true,
-    port: 3000
+    }));
   }
-})`
+
+  function attachServerReadyListener(runId: number) {
+    if (!webContainer) {
+      return;
+    }
+
+    serverReadyDisposeRef.current?.();
+    serverReadyDisposeRef.current = null;
+
+    const handler = (port: number, previewUrl: string) => {
+      if (runIdRef.current !== runId) {
+        return;
       }
+
+      addLog(`Server started on port ${port}`, 'success');
+      addLog('React preview is ready', 'success');
+      setUrl(previewUrl);
+      setStatus('Ready!');
+      setProgress(100);
+      setIsLoading(false);
+
+      setTimeout(() => {
+        if (runIdRef.current === runId) {
+          setShowLogs(false);
+        }
+      }, 3000);
     };
-    
-    tree['index.html'] = {
-      file: {
-        contents: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Generated App</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
+
+    const dispose = (webContainer as any).on?.('server-ready', handler);
+
+    if (typeof dispose === 'function') {
+      serverReadyDisposeRef.current = dispose;
+      return;
     }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
-</body>
-</html>`
+
+    if (typeof (webContainer as any).off === 'function') {
+      serverReadyDisposeRef.current = () => {
+        (webContainer as any).off('server-ready', handler);
+      };
+    }
+  }
+
+  async function streamProcessOutput(
+    process: WebContainerProcess,
+    runId: number,
+    onLine: (line: string) => void
+  ) {
+    const reader = process.output.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done || runIdRef.current !== runId) {
+          break;
+        }
+
+        if (value !== undefined && value !== null) {
+          const text = typeof value === 'string'
+            ? value
+            : decoder.decode(value as AllowSharedBufferSource, { stream: true });
+          text.split('\n').map(line => line.trim()).filter(Boolean).forEach(onLine);
+        }
       }
-    };
-    
-    tree['src'] = { directory: {} };
-    
-    tree['src'].directory['main.jsx'] = {
-      file: {
-        contents: `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)`
+    } catch (error) {
+      if (runIdRef.current === runId) {
+        addLog(`Log stream error: ${error}`, 'warning');
       }
-    };
-    
-    // Simple logic to determine app type
-    const appContent = determineAppType(files);
-    
-    tree['src'].directory['App.jsx'] = {
-      file: {
-        contents: appContent
-      }
-    };
-    
-    return tree;
-  }
-
-  function determineAppType(files: FileItem[]): string {
-    console.log('🔍 Determining app type from files:', files.map(f => f.name));
-    
-    // Check file names and content for keywords
-    const allContent = files.map(f => `${f.name} ${f.content || ''}`).join(' ').toLowerCase();
-    
-    console.log('📝 Content keywords found:', {
-      weather: allContent.includes('weather'),
-      portfolio: allContent.includes('portfolio'),
-      todo: allContent.includes('todo') || allContent.includes('task')
-    });
-    
-    if (allContent.includes('weather')) {
-      console.log('✅ Creating Weather App');
-      return createWeatherApp();
+    } finally {
+      reader.releaseLock();
     }
-    
-    if (allContent.includes('portfolio')) {
-      console.log('✅ Creating Portfolio App');
-      return createPortfolioApp();
-    }
-    
-    if (allContent.includes('todo') || allContent.includes('task')) {
-      console.log('✅ Creating Todo App');
-      return createTodoApp();
-    }
-    
-    console.log('⚠️ Creating Generic App');
-    return createGenericApp(allContent);
-  }
-
-  function createWeatherApp(): string {
-    return `import React, { useState, useEffect } from 'react';
-
-function App() {
-  const [weather, setWeather] = useState(null);
-  const [city, setCity] = useState('London');
-  const [loading, setLoading] = useState(false);
-
-  const mockWeatherData = {
-    London: { temp: 22, condition: 'Sunny ☀️', humidity: 65 },
-    Paris: { temp: 18, condition: 'Cloudy ☁️', humidity: 70 },
-    Tokyo: { temp: 25, condition: 'Rainy 🌧️', humidity: 80 },
-    'New York': { temp: 20, condition: 'Partly Cloudy ⛅', humidity: 60 }
-  };
-
-  const getWeather = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setWeather(mockWeatherData[city] || { temp: 15, condition: 'Unknown ❓', humidity: 50 });
-      setLoading(false);
-    }, 1000);
-  };
-
-  useEffect(() => {
-    getWeather();
-  }, [city]);
-
-  return (
-    <div style={{ 
-      maxWidth: '600px', 
-      margin: '0 auto', 
-      padding: '2rem',
-      background: 'rgba(255,255,255,0.1)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '16px',
-      marginTop: '2rem',
-      color: 'white',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-      textAlign: 'center'
-    }}>
-      <h1 style={{ fontSize: '2.5rem', marginBottom: '2rem' }}>
-        🌤️ Weather App
-      </h1>
-      
-      <div style={{ marginBottom: '2rem' }}>
-        <select 
-          value={city} 
-          onChange={(e) => setCity(e.target.value)}
-          style={{
-            padding: '12px',
-            borderRadius: '8px',
-            border: '1px solid rgba(255,255,255,0.3)',
-            background: 'rgba(255,255,255,0.1)',
-            color: 'white',
-            fontSize: '16px',
-            marginRight: '10px'
-          }}
-        >
-          <option value="London">London</option>
-          <option value="Paris">Paris</option>
-          <option value="Tokyo">Tokyo</option>
-          <option value="New York">New York</option>
-        </select>
-        <button
-          onClick={getWeather}
-          disabled={loading}
-          style={{
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            color: 'white',
-            border: 'none',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontWeight: 600
-          }}
-        >
-          {loading ? 'Loading...' : 'Get Weather'}
-        </button>
-      </div>
-
-      {weather && (
-        <div style={{
-          background: 'rgba(255,255,255,0.1)',
-          borderRadius: '12px',
-          padding: '2rem',
-          marginTop: '2rem'
-        }}>
-          <h2 style={{ fontSize: '2rem', marginBottom: '1rem' }}>{city}</h2>
-          <div style={{ fontSize: '3rem', margin: '1rem 0' }}>{weather.temp}°C</div>
-          <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>{weather.condition}</div>
-          <div>Humidity: {weather.humidity}%</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default App;`;
-  }
-
-  function createPortfolioApp(): string {
-    return `import React, { useState } from 'react';
-
-function App() {
-  const [activeSection, setActiveSection] = useState('home');
-
-  const projects = [
-    {
-      title: 'E-commerce Website',
-      description: 'Modern online shopping platform built with React',
-      tech: ['React', 'Node.js', 'MongoDB'],
-      image: '🛒'
-    },
-    {
-      title: 'Weather Dashboard',
-      description: 'Real-time weather tracking application',
-      tech: ['JavaScript', 'API Integration', 'CSS'],
-      image: '🌤️'
-    },
-    {
-      title: 'Task Manager',
-      description: 'Productivity app for managing daily tasks',
-      tech: ['React', 'Local Storage', 'Material-UI'],
-      image: '📋'
-    }
-  ];
-
-  return (
-    <div style={{ color: 'white', minHeight: '100vh' }}>
-      <nav style={{ 
-        padding: '1rem 2rem', 
-        display: 'flex', 
-        justifyContent: 'center', 
-        gap: '2rem',
-        background: 'rgba(255,255,255,0.1)',
-        backdropFilter: 'blur(10px)'
-      }}>
-        {['home', 'projects', 'contact'].map(section => (
-          <button
-            key={section}
-            onClick={() => setActiveSection(section)}
-            style={{
-              background: activeSection === section ? 'rgba(255,255,255,0.2)' : 'transparent',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.3)',
-              padding: '8px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              textTransform: 'capitalize'
-            }}
-          >
-            {section}
-          </button>
-        ))}
-      </nav>
-
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-        {activeSection === 'home' && (
-          <div style={{ textAlign: 'center', padding: '4rem 0' }}>
-            <h1 style={{ fontSize: '4rem', marginBottom: '1rem' }}>
-              👋 Hi, I'm a Developer
-            </h1>
-            <p style={{ fontSize: '1.5rem', opacity: 0.8, maxWidth: '600px', margin: '0 auto' }}>
-              I create amazing web applications using modern technologies. 
-              Passionate about clean code and great user experiences.
-            </p>
-            <button
-              onClick={() => setActiveSection('projects')}
-              style={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white',
-                border: 'none',
-                padding: '16px 32px',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '16px',
-                marginTop: '2rem'
-              }}
-            >
-              View My Projects
-            </button>
-          </div>
-        )}
-
-        {activeSection === 'projects' && (
-          <div>
-            <h2 style={{ fontSize: '3rem', textAlign: 'center', marginBottom: '3rem' }}>
-              My Projects
-            </h2>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', 
-              gap: '2rem' 
-            }}>
-              {projects.map((project, index) => (
-                <div
-                  key={index}
-                  style={{
-                    background: 'rgba(255,255,255,0.1)',
-                    backdropFilter: 'blur(10px)',
-                    borderRadius: '16px',
-                    padding: '2rem',
-                    border: '1px solid rgba(255,255,255,0.2)'
-                  }}
-                >
-                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>{project.image}</div>
-                  <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>{project.title}</h3>
-                  <p style={{ opacity: 0.8, marginBottom: '1rem' }}>{project.description}</p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    {project.tech.map(tech => (
-                      <span
-                        key={tech}
-                        style={{
-                          background: 'rgba(255,255,255,0.2)',
-                          padding: '4px 12px',
-                          borderRadius: '16px',
-                          fontSize: '0.875rem'
-                        }}
-                      >
-                        {tech}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeSection === 'contact' && (
-          <div style={{ textAlign: 'center', padding: '4rem 0' }}>
-            <h2 style={{ fontSize: '3rem', marginBottom: '2rem' }}>Get In Touch</h2>
-            <div style={{
-              background: 'rgba(255,255,255,0.1)',
-              backdropFilter: 'blur(10px)',
-              borderRadius: '16px',
-              padding: '3rem',
-              maxWidth: '600px',
-              margin: '0 auto'
-            }}>
-              <p style={{ fontSize: '1.25rem', marginBottom: '2rem' }}>📧 developer@example.com</p>
-              <p style={{ fontSize: '1.25rem', marginBottom: '2rem' }}>🐱 GitHub: /developer</p>
-              <p style={{ fontSize: '1.25rem' }}>💼 LinkedIn: /in/developer</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export default App;`;
-  }
-
-  function createTodoApp(): string {
-    return `import React, { useState } from 'react';
-
-function App() {
-  const [todos, setTodos] = useState([]);
-  const [input, setInput] = useState('');
-
-  const addTodo = () => {
-    if (input.trim()) {
-      setTodos([...todos, { id: Date.now(), text: input, completed: false }]);
-      setInput('');
-    }
-  };
-
-  const toggleTodo = (id) => {
-    setTodos(todos.map(todo => 
-      todo.id === id ? { ...todo, completed: !todo.completed } : todo
-    ));
-  };
-
-  const deleteTodo = (id) => {
-    setTodos(todos.filter(todo => todo.id !== id));
-  };
-
-  return (
-    <div style={{ 
-      maxWidth: '800px', 
-      margin: '0 auto', 
-      padding: '2rem',
-      background: 'rgba(255,255,255,0.1)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '16px',
-      marginTop: '2rem',
-      color: 'white',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
-    }}>
-      <h1 style={{ fontSize: '2.5rem', textAlign: 'center', marginBottom: '2rem' }}>
-        📋 Todo App
-      </h1>
-      
-      <div style={{ marginBottom: '2rem', display: 'flex', gap: '10px' }}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Add new task"
-          style={{
-            flex: 1,
-            padding: '12px',
-            border: '1px solid rgba(255,255,255,0.3)',
-            borderRadius: '8px',
-            background: 'rgba(255,255,255,0.1)',
-            color: 'white',
-            fontSize: '16px'
-          }}
-          onKeyPress={(e) => e.key === 'Enter' && addTodo()}
-        />
-        <button
-          onClick={addTodo}
-          style={{
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            color: 'white',
-            border: 'none',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 600
-          }}
-        >
-          Add Task
-        </button>
-      </div>
-      
-      <ul style={{ listStyle: 'none', padding: 0 }}>
-        {todos.map(todo => (
-          <li
-            key={todo.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              padding: '12px',
-              margin: '8px 0',
-              background: 'rgba(255,255,255,0.1)',
-              borderRadius: '8px',
-              opacity: todo.completed ? 0.6 : 1,
-              textDecoration: todo.completed ? 'line-through' : 'none'
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={todo.completed}
-              onChange={() => toggleTodo(todo.id)}
-            />
-            <span style={{ flex: 1, marginLeft: '10px' }}>{todo.text}</span>
-            <button
-              onClick={() => deleteTodo(todo.id)}
-              style={{
-                background: '#e74c3c',
-                color: 'white',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              Remove
-            </button>
-          </li>
-        ))}
-      </ul>
-      
-      {todos.length === 0 && (
-        <p style={{ textAlign: 'center', opacity: 0.7, marginTop: '2rem' }}>
-          No tasks yet. Add one above!
-        </p>
-      )}
-    </div>
-  );
-}
-
-export default App;`;
-  }
-
-  function createGenericApp(content: string): string {
-    return `import React from 'react';
-
-function App() {
-  return (
-    <div style={{ 
-      maxWidth: '800px', 
-      margin: '0 auto', 
-      padding: '2rem',
-      background: 'rgba(255,255,255,0.1)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '16px',
-      marginTop: '2rem',
-      color: 'white',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
-    }}>
-      <h1 style={{ fontSize: '2.5rem', textAlign: 'center', marginBottom: '2rem' }}>
-        🚀 Generated App
-      </h1>
-      
-      <div style={{
-        background: 'rgba(255,255,255,0.1)',
-        borderRadius: '12px',
-        padding: '2rem',
-        textAlign: 'center'
-      }}>
-        <p style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>
-          Your app has been generated successfully!
-        </p>
-        <p style={{ opacity: 0.7 }}>
-          This is a demo application created from your prompt.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-export default App;`;
   }
 
   const getStatusIcon = () => {
@@ -757,4 +370,441 @@ export default App;`;
       </div>
     </div>
   );
+}
+
+type FlatFile = {
+  path: string;
+  content: string;
+};
+
+function createReactFileTree(files: FileItem[]): FileSystemTree {
+  const flatFiles = flattenFileItems(files);
+  const fileMap = new Map<string, FlatFile>();
+
+  flatFiles.forEach(file => {
+    const normalized = normalizePath(file.path);
+    if (normalized) {
+      fileMap.set(normalized, {
+        path: normalized,
+        content: file.content
+      });
+    }
+  });
+
+  // Try to convert vanilla HTML/CSS/JS to React
+  const wasPatched = convertVanillaToReact(fileMap);
+  console.log('🔧 Conversion result:', wasPatched);
+
+  const hasTypeScript = Array.from(fileMap.keys()).some(path => path.endsWith('.ts') || path.endsWith('.tsx'));
+
+  const appCandidates = ['src/App.tsx', 'src/App.ts', 'src/App.jsx', 'src/App.js'];
+  const existingAppPath = appCandidates.find(candidate => fileMap.has(candidate));
+  const inferredAppExtension = existingAppPath?.split('.').pop() ?? (hasTypeScript ? 'tsx' : 'jsx');
+  const appExtension = inferredAppExtension === 'ts' ? 'tsx' : inferredAppExtension === 'js' ? 'jsx' : inferredAppExtension;
+  const appPath = existingAppPath ?? `src/App.${appExtension}`;
+
+  console.log('📂 App path check:', { appPath, exists: fileMap.has(appPath), wasPatched });
+
+  // Only add default App if no App exists AND we didn't just patch one
+  if (!fileMap.has(appPath) && !wasPatched) {
+    console.log('📝 Adding default App.tsx placeholder');
+    fileMap.set(appPath, {
+      path: appPath,
+      content: defaultAppContent(appExtension === 'tsx' ? 'tsx' : 'jsx')
+    });
+  } else if (fileMap.has(appPath)) {
+    console.log('✅ Using existing App at:', appPath);
+  }
+
+  const mainCandidates = ['src/main.tsx', 'src/main.ts', 'src/main.jsx', 'src/main.js'];
+  const existingMainPath = mainCandidates.find(candidate => fileMap.has(candidate));
+  const inferredMainExtension = existingMainPath?.split('.').pop() ?? (appPath.endsWith('.tsx') || appPath.endsWith('.ts') ? 'tsx' : 'jsx');
+  const mainExtension = inferredMainExtension === 'ts' ? 'tsx' : inferredMainExtension === 'js' ? 'jsx' : inferredMainExtension;
+  const mainPath = existingMainPath ?? `src/main.${mainExtension}`;
+
+  if (!fileMap.has(mainPath)) {
+    fileMap.set(mainPath, {
+      path: mainPath,
+      content: defaultMainContent()
+    });
+  }
+
+  const needsTsconfig = Array.from(fileMap.keys()).some(path => path.endsWith('.ts') || path.endsWith('.tsx'));
+  const scriptEntry = `/${mainPath}`;
+
+  const pkg: Record<string, unknown> = {
+    name: 'ai-generated-app',
+    private: true,
+    type: 'module',
+    scripts: {
+      dev: 'vite --host',
+      build: 'vite build',
+      preview: 'vite preview'
+    },
+    dependencies: {
+      react: '^18.3.1',
+      'react-dom': '^18.3.1'
+    },
+    devDependencies: {
+      '@vitejs/plugin-react': '^4.3.1',
+      vite: '^5.4.2'
+    }
+  };
+
+  if (needsTsconfig) {
+    const devDeps = pkg.devDependencies as Record<string, string>;
+    devDeps.typescript = '^5.5.3';
+    devDeps['@types/react'] = '^18.3.5';
+    devDeps['@types/react-dom'] = '^18.3.0';
+  }
+
+  const tree: FileSystemTree = {
+    'package.json': {
+      file: {
+        contents: JSON.stringify(pkg, null, 2)
+      }
+    },
+    'vite.config.ts': {
+      file: {
+        contents: `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 3000
+  }
+});`
+      }
+    },
+    'index.html': {
+      file: {
+        contents: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Generated App</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="${scriptEntry}"></script>
+</body>
+</html>`
+      }
+    }
+  };
+
+  if (needsTsconfig) {
+    tree['tsconfig.json'] = {
+      file: {
+        contents: JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            useDefineForClassFields: true,
+            module: 'ESNext',
+            lib: ['ES2020', 'DOM'],
+            moduleResolution: 'Bundler',
+            jsx: 'react-jsx',
+            strict: true,
+            esModuleInterop: true,
+            skipLibCheck: true
+          },
+          include: ['src']
+        }, null, 2)
+      }
+    };
+  }
+
+  for (const file of fileMap.values()) {
+    if (!file.path || ['package.json', 'vite.config.ts', 'index.html', 'tsconfig.json'].includes(file.path)) {
+      continue;
+    }
+
+    insertFileIntoTree(tree, file.path.split('/'), file.content);
+  }
+
+  return tree;
+}
+
+function flattenFileItems(items: FileItem[], parentPath = ''): FlatFile[] {
+  const flattened: FlatFile[] = [];
+
+  items.forEach(item => {
+    const derivedPath = parentPath ? `${parentPath}/${item.name}` : item.name;
+
+    if (item.type === 'folder') {
+      if (item.children && item.children.length > 0) {
+        flattened.push(...flattenFileItems(item.children, derivedPath));
+      }
+      return;
+    }
+
+    const targetPath = item.path ? normalizePath(item.path) : normalizePath(derivedPath);
+    if (targetPath) {
+      flattened.push({
+        path: targetPath,
+        content: item.content ?? ''
+      });
+    }
+  });
+
+  return flattened;
+}
+
+function insertFileIntoTree(tree: FileSystemTree, segments: string[], contents: string) {
+  if (segments.length === 0) {
+    return;
+  }
+
+  const [segment, ...rest] = segments;
+
+  if (!segment) {
+    insertFileIntoTree(tree, rest, contents);
+    return;
+  }
+
+  if (rest.length === 0) {
+    tree[segment] = {
+      file: {
+        contents
+      }
+    };
+    return;
+  }
+
+  if (!tree[segment] || !('directory' in (tree[segment] as any))) {
+    tree[segment] = {
+      directory: {}
+    };
+  }
+
+  insertFileIntoTree((tree[segment] as any).directory, rest, contents);
+}
+
+function defaultAppContent(extension: 'tsx' | 'jsx'): string {
+  if (extension === 'tsx') {
+    return `import React from 'react';
+
+const App: React.FC = () => (
+  <main style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif' }}>
+    <h1>Generated Preview</h1>
+    <p>Update the generated files to refresh this preview.</p>
+  </main>
+);
+
+export default App;
+`;
+  }
+
+  return `import React from 'react';
+
+function App() {
+  return (
+    <main style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif' }}>
+      <h1>Generated Preview</h1>
+      <p>Update the generated files to refresh this preview.</p>
+    </main>
+  );
+}
+
+export default App;
+`;
+}
+
+function defaultMainContent(): string {
+  return `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+const rootElement = document.getElementById('root');
+
+if (!rootElement) {
+  throw new Error('Root element not found');
+}
+
+ReactDOM.createRoot(rootElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+`;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/^\/+/g, '').replace(/\\/g, '/');
+}
+
+/**
+ * Universal converter: Converts ANY vanilla HTML/CSS/JS app to React
+ * Works for todo apps, portfolios, weather apps, etc.
+ */
+function convertVanillaToReact(fileMap: Map<string, FlatFile>): boolean {
+  // Don't convert if React App already exists
+  if (fileMap.has('src/App.tsx') || fileMap.has('src/App.jsx')) {
+    console.log('✅ React app already exists, skipping conversion');
+    return false;
+  }
+
+  console.log('🔍 Checking for vanilla HTML/CSS/JS app. Available files:', Array.from(fileMap.keys()));
+
+  // Find HTML, JS, and CSS files
+  const htmlFile = fileMap.get('index.html') || fileMap.get('src/index.html') || fileMap.get('portfolio/index.html');
+  const jsFiles = Array.from(fileMap.entries()).filter(([path]) => 
+    path.endsWith('.js') && !path.includes('node_modules') && !path.includes('vite.config')
+  );
+  const cssFiles = Array.from(fileMap.entries()).filter(([path]) => 
+    path.endsWith('.css') && !path.includes('node_modules') && !path.includes('index.css')
+  );
+
+  console.log('📁 Found files:', { 
+    html: !!htmlFile,
+    htmlPath: htmlFile ? Array.from(fileMap.keys()).find(k => k.includes('html')) : null,
+    jsFiles: jsFiles.map(([path]) => path),
+    cssFiles: cssFiles.map(([path]) => path),
+    allFiles: Array.from(fileMap.keys())
+  });
+
+  // Must have at least HTML to convert
+  if (!htmlFile) {
+    console.log('❌ No HTML file found, cannot convert. Available:', Array.from(fileMap.keys()));
+    return false;
+  }
+
+  console.log('✅ Converting vanilla app to React!');
+
+  // Extract body content from HTML
+  const htmlContent = htmlFile.content;
+  const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const bodyContent = bodyMatch ? bodyMatch[1] : htmlContent;
+  
+  // Extract title
+  const titleMatch = htmlContent.match(/<title>([^<]+)<\/title>/i);
+  const pageTitle = titleMatch ? titleMatch[1] : 'Generated App';
+
+  // Remove script tags from body content
+  const cleanBodyContent = bodyContent.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+
+  // Combine all CSS
+  const combinedCSS = cssFiles.map(([, file]) => file.content).join('\n\n');
+
+  // Combine all JS (we'll convert to React hooks)
+  const combinedJS = jsFiles.map(([, file]) => file.content).join('\n\n');
+
+  // Generate React component
+  const reactApp = generateReactComponent(cleanBodyContent, combinedJS, pageTitle);
+  const reactCSS = generateReactCSS(combinedCSS, cleanBodyContent);
+
+  // Add React files
+  fileMap.set('src/App.tsx', {
+    path: 'src/App.tsx',
+    content: reactApp
+  });
+
+  fileMap.set('src/App.css', {
+    path: 'src/App.css',
+    content: reactCSS
+  });
+
+  // Remove all vanilla files
+  fileMap.delete('index.html');
+  fileMap.delete('src/index.html');
+  jsFiles.forEach(([path]) => fileMap.delete(path));
+  cssFiles.forEach(([path]) => fileMap.delete(path));
+
+  console.log('✅ Successfully converted vanilla app to React!');
+  console.log('📦 New files:', Array.from(fileMap.keys()));
+
+  return true;
+}
+
+/**
+ * Generate React component from HTML and JS
+ */
+function generateReactComponent(htmlContent: string, jsContent: string, title: string): string {
+  // Clean and convert HTML to JSX-friendly format
+  let jsxContent = htmlContent
+    .replace(/class=/g, 'className=')
+    .replace(/for=/g, 'htmlFor=')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .trim();
+
+  // Detect if there's dynamic content that needs state
+  const needsState = /addEventListener|getElementById|querySelector|fetch|innerHTML/.test(jsContent);
+
+  if (needsState) {
+    return `import { useEffect, useState } from 'react';
+import './App.css';
+
+export default function App() {
+  const [data, setData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Initialize app
+    setLoading(false);
+    
+    // Note: Original JavaScript code needs manual conversion to React
+    // The vanilla JS used DOM manipulation which doesn't work in React
+    // Please convert event listeners and DOM queries to React patterns
+  }, []);
+
+  return (
+    <div className="app-container">
+      <h1>${title}</h1>
+      <div dangerouslySetInnerHTML={{ __html: \`${jsxContent.replace(/`/g, '\\`')}\` }} />
+      {loading && <p>Loading...</p>}
+    </div>
+  );
+}
+`;
+  }
+
+  // Simple static content
+  return `import './App.css';
+
+export default function App() {
+  return (
+    <div className="app-container">
+      <div dangerouslySetInnerHTML={{ __html: \`${jsxContent.replace(/`/g, '\\`')}\` }} />
+    </div>
+  );
+}
+`;
+}
+
+/**
+ * Generate React CSS with improvements
+ */
+function generateReactCSS(originalCSS: string, _htmlContent: string): string {
+  // Add base styles if not present
+  const hasBaseStyles = /body\s*{/.test(originalCSS);
+  
+  const baseStyles = hasBaseStyles ? '' : `* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+`;
+
+  return `${baseStyles}
+.app-container {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Original styles */
+${originalCSS}
+`;
 }

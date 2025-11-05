@@ -1,26 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { StepsList } from '../components/StepsList';
 import { FileExplorer } from '../components/FileExplorer';
 import { TabView } from '../components/TabView';
 import { CodeEditor } from '../components/CodeEditor';
 import { PreviewFrame } from '../components/PreviewFrame';
-import { Step, FileItem, StepType } from '../types';
+import { Step, FileItem } from '../types';
 import axios from 'axios';
 import { BACKEND_URL } from '../config';
 import { parseXml } from '../steps';
 import { useWebContainer } from '../hooks/useWebContainer';
-import { FileNode } from '@webcontainer/api';
 import { Loader } from '../components/Loader';
-
-const MOCK_FILE_CONTENT = `// This is a sample file content
-import React from 'react';
-
-function Component() {
-  return <div>Hello World</div>;
-}
-
-export default Component;`;
 
 export function Builder() {
   const location = useLocation();
@@ -42,10 +32,10 @@ export function Builder() {
   useEffect(() => {
     let originalFiles = [...files];
     let updateHappened = false;
-    steps.filter(({status}) => status === "pending").map(step => {
+    steps.filter(({ status }) => status === "pending").map((step: Step) => {
       updateHappened = true;
-      if (step?.type === StepType.CreateFile) {
-        let parsedPath = step.path?.split("/") ?? []; // ["src", "components", "App.tsx"]
+      if (step?.path && step?.code) {
+        let parsedPath = step.path.split("/") ?? [];
         let currentFileStructure = [...originalFiles]; // {}
         let finalAnswerRef = currentFileStructure;
   
@@ -90,65 +80,13 @@ export function Builder() {
     })
 
     if (updateHappened) {
-
-      setFiles(originalFiles)
-      setSteps(steps => steps.map((s: Step) => {
-        return {
-          ...s,
-          status: "completed"
-        }
-        
-      }))
+      setFiles(originalFiles);
+      setSteps((previous: Step[]) => previous.map((stepItem) => ({
+        ...stepItem,
+        status: "completed"
+      })));
     }
-    console.log(files);
   }, [steps, files]);
-
-  useEffect(() => {
-    const createMountStructure = (files: FileItem[]): Record<string, any> => {
-      const mountStructure: Record<string, any> = {};
-  
-      const processFile = (file: FileItem, isRootFolder: boolean) => {  
-        if (file.type === 'folder') {
-          // For folders, create a directory entry
-          mountStructure[file.name] = {
-            directory: file.children ? 
-              Object.fromEntries(
-                file.children.map(child => [child.name, processFile(child, false)])
-              ) 
-              : {}
-          };
-        } else if (file.type === 'file') {
-          if (isRootFolder) {
-            mountStructure[file.name] = {
-              file: {
-                contents: file.content || ''
-              }
-            };
-          } else {
-            // For files, create a file entry with contents
-            return {
-              file: {
-                contents: file.content || ''
-              }
-            };
-          }
-        }
-  
-        return mountStructure[file.name];
-      };
-  
-      // Process each top-level file/folder
-      files.forEach(file => processFile(file, true));
-  
-      return mountStructure;
-    };
-  
-    const mountStructure = createMountStructure(files);
-  
-    // Mount the structure if WebContainer is available
-    console.log(mountStructure);
-    webcontainer?.mount(mountStructure);
-  }, [files, webcontainer]);
 
   async function init() {
     const response = await axios.post(`${BACKEND_URL}/template`, {
@@ -173,7 +111,7 @@ export function Builder() {
 
     setLoading(false);
 
-    setSteps(s => [...s, ...parseXml(stepsResponse.data.response).map(x => ({
+    setSteps((current: Step[]) => [...current, ...parseXml(stepsResponse.data.response).map(x => ({
       ...x,
       status: "pending" as "pending"
     }))]);
@@ -183,7 +121,7 @@ export function Builder() {
       content
     })));
 
-    setLlmMessages(x => [...x, {role: "assistant", content: stepsResponse.data.response}])
+    setLlmMessages((current) => [...current, {role: "assistant", content: stepsResponse.data.response}])
   }
 
   useEffect(() => {
@@ -191,69 +129,112 @@ export function Builder() {
   }, [])
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
-      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <h1 className="text-xl font-semibold text-gray-100">Website Builder</h1>
-        <p className="text-sm text-gray-400 mt-1">Prompt: {prompt}</p>
+    <div className="min-h-screen bg-[#0a0a0a] flex flex-col">
+      {/* Header with gradient border */}
+      <header className="bg-[#111111] border-b border-gray-800/50 backdrop-blur-sm">
+        <div className="px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse"></div>
+              <h1 className="text-xl font-semibold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+                AI Website Builder
+              </h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 text-xs font-medium bg-green-500/10 text-green-400 rounded-full border border-green-500/20">
+                ● Live
+              </span>
+            </div>
+          </div>
+          <p className="text-sm text-gray-500 mt-2 font-mono">
+            <span className="text-gray-600">$</span> {prompt}
+          </p>
+        </div>
       </header>
       
       <div className="flex-1 overflow-hidden">
-        <div className="h-full grid grid-cols-4 gap-6 p-6">
-          <div className="col-span-1 space-y-6 overflow-auto">
-            <div>
-              <div className="max-h-[75vh] overflow-scroll">
+        <div className="h-full grid grid-cols-4 gap-4 p-4">
+          {/* Build Steps & Chat Panel */}
+          <div className="col-span-1 space-y-4 overflow-auto">
+            {/* Build Steps with modern design */}
+            <div className="bg-[#111111] rounded-xl border border-gray-800/50 overflow-hidden">
+              <div className="max-h-[70vh] overflow-y-auto custom-scrollbar">
                 <StepsList
                   steps={steps}
                   currentStep={currentStep}
                   onStepClick={setCurrentStep}
                 />
               </div>
-              <div>
-                <div className='flex'>
-                  <br />
-                  {(loading || !templateSet) && <Loader />}
-                  {!(loading || !templateSet) && <div className='flex'>
-                    <textarea value={userPrompt} onChange={(e) => {
-                    setPrompt(e.target.value)
-                  }} className='p-2 w-full'></textarea>
-                  <button onClick={async () => {
-                    const newMessage = {
-                      role: "user" as "user",
-                      content: userPrompt
-                    };
+            </div>
 
-                    setLoading(true);
-                    const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
-                      messages: [...llmMessages, newMessage]
-                    });
-                    setLoading(false);
-
-                    setLlmMessages(x => [...x, newMessage]);
-                    setLlmMessages(x => [...x, {
-                      role: "assistant",
-                      content: stepsResponse.data.response
-                    }]);
-                    
-                    setSteps(s => [...s, ...parseXml(stepsResponse.data.response).map(x => ({
-                      ...x,
-                      status: "pending" as "pending"
-                    }))]);
-
-                  }} className='bg-purple-400 px-4'>Send</button>
-                  </div>}
+            {/* Chat Input with modern design */}
+            <div className="bg-[#111111] rounded-xl border border-gray-800/50 p-4">
+              {(loading || !templateSet) ? (
+                <div className="flex flex-col items-center justify-center py-8">
+                  <Loader />
+                  <p className="text-gray-500 text-sm mt-4 animate-pulse">
+                    {!templateSet ? 'Initializing...' : 'Processing...'}
+                  </p>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-3">
+                  <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    Modify Request
+                  </label>
+                  <textarea 
+                    value={userPrompt} 
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Ask for changes or improvements..."
+                    className="w-full bg-[#1a1a1a] text-gray-300 placeholder-gray-600 rounded-lg p-3 text-sm font-mono border border-gray-800 focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:outline-none transition-all resize-none"
+                    rows={4}
+                  />
+                  <button 
+                    onClick={async () => {
+                      const newMessage = {
+                        role: "user" as "user",
+                        content: userPrompt
+                      };
+
+                      setLoading(true);
+                      const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
+                        messages: [...llmMessages, newMessage]
+                      });
+                      setLoading(false);
+
+                      setLlmMessages((current) => [...current, newMessage]);
+                      setLlmMessages((current) => [...current, {
+                        role: "assistant",
+                        content: stepsResponse.data.response
+                      }]);
+                      
+                      setSteps((currentSteps: Step[]) => [...currentSteps, ...parseXml(stepsResponse.data.response).map(x => ({
+                        ...x,
+                        status: "pending" as "pending"
+                      }))]);
+                      setPrompt("");
+                    }}
+                    disabled={!userPrompt.trim()}
+                    className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-medium py-2.5 px-4 rounded-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-purple-500/25"
+                  >
+                    Send Request
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-          <div className="col-span-1">
-              <FileExplorer 
-                files={files} 
-                onFileSelect={setSelectedFile}
-              />
-            </div>
-          <div className="col-span-2 bg-gray-900 rounded-lg shadow-lg p-4 h-[calc(100vh-8rem)]">
+
+          {/* File Explorer */}
+          <div className="col-span-1 bg-[#111111] rounded-xl border border-gray-800/50 overflow-hidden">
+            <FileExplorer 
+              files={files} 
+              onFileSelect={setSelectedFile}
+            />
+          </div>
+
+          {/* Code Editor & Preview */}
+          <div className="col-span-2 bg-[#111111] rounded-xl border border-gray-800/50 overflow-hidden h-[calc(100vh-6rem)]">
             <TabView activeTab={activeTab} onTabChange={setActiveTab} />
-            <div className="h-[calc(100%-4rem)]">
+            <div className="h-[calc(100%-3.5rem)]">
               {activeTab === 'code' ? (
                 <CodeEditor file={selectedFile} />
               ) : (
