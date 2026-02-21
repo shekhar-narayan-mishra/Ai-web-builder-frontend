@@ -25,7 +25,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [buildStatus, setBuildStatus] = useState('');
 
-  const webcontainer = useWebContainer();
+  const { webcontainer, bootError, retry: retryWebContainer } = useWebContainer();
   const toast = useToast();
 
   const handleProjectSelect = async (projectPrompt: string) => {
@@ -226,7 +226,7 @@ function App() {
             {activeTab === 'code' ? (
               <CodeEditor file={selectedFile} />
             ) : (
-              <PreviewFrame files={files} webContainer={webcontainer!} />
+              <PreviewFrame files={files} webContainer={webcontainer} bootError={bootError} onRetry={retryWebContainer} />
             )}
           </div>
         </div>

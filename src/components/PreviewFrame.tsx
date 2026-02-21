@@ -6,6 +6,8 @@ import { Loader2, CheckCircle, AlertCircle, Play, Package, Server, FolderOpen } 
 interface PreviewFrameProps {
   files: FileItem[];
   webContainer: WebContainer | null;
+  bootError?: string | null;
+  onRetry?: () => void;
 }
 
 interface LogEntry {
@@ -42,7 +44,7 @@ function isNoisyLine(line: string): boolean {
   return false;
 }
 
-export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
+export function PreviewFrame({ files, webContainer, bootError, onRetry }: PreviewFrameProps) {
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -298,7 +300,29 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
   if (!webContainer) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-gray-400">Initializing WebContainer...</div>
+        <div className="text-center px-8 max-w-md">
+          {bootError ? (
+            <>
+              <AlertCircle className="w-10 h-10 text-red-400/70 mx-auto mb-3" />
+              <p className="text-red-400/80 text-sm mb-2 font-medium">WebContainer Failed to Start</p>
+              <p className="text-gray-500 text-xs mb-4 leading-relaxed">{bootError}</p>
+              {onRetry && (
+                <button
+                  onClick={onRetry}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded-lg transition-colors"
+                >
+                  Retry
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <Loader2 className="w-8 h-8 text-purple-400 animate-spin mx-auto mb-3" />
+              <p className="text-gray-400 text-sm">Initializing WebContainer...</p>
+              <p className="text-gray-600 text-xs mt-1">This may take a few seconds</p>
+            </>
+          )}
+        </div>
       </div>
     );
   }
