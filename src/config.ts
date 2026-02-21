@@ -1,5 +1,5 @@
-const fallbackUrl = 'https://ai-web-builder-backend-production.up.railway.app';
+const fallbackUrl = 'http://localhost:3000';
 
-// Vite exposes environment variables via import.meta.env at runtime.
-// Accessing process.env in the browser throws, which previously blanked the app.
+// In production (Vercel), set VITE_BACKEND_URL env var to your Render backend URL
+// e.g., https://ai-web-builder-backend.onrender.com
 export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? fallbackUrl;

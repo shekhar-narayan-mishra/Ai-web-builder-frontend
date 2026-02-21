@@ -23,7 +23,8 @@ function App() {
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [activeTab, setActiveTab] = useState<'code' | 'preview'>('code');
   const [isLoading, setIsLoading] = useState(false);
-  
+  const [buildStatus, setBuildStatus] = useState('');
+
   const webcontainer = useWebContainer();
   const toast = useToast();
 
@@ -37,73 +38,83 @@ function App() {
     setIsLoading(true);
     setSteps([]);
     setFiles([]);
-    
+    setBuildStatus('Starting generation...');
+
     try {
       console.log('🚀 Starting project generation for:', projectPrompt);
-      toast.info('🚀 Starting generation...');
-      
+
       // Get template type first
+      setBuildStatus('Loading template...');
       const templateResponse = await axios.post(`${BACKEND_URL}/template`, {
         prompt: projectPrompt
       }, {
-        timeout: 30000 // 30 second timeout
+        timeout: 30000
       });
-      
-      console.log('📋 Template response:', templateResponse.data);
-      toast.info('📋 Template loaded...');
 
-      // Get code generation
+      console.log('📋 Template response:', templateResponse.data);
+
+      // Build context messages from template prompts
+      const templatePrompts: string[] = templateResponse.data.prompts || [];
+      const contextMessages = templatePrompts.map((p: string) => ({
+        role: 'user' as const,
+        content: p
+      }));
+
+      // Get code generation — include template context so AI knows the project structure
+      setBuildStatus('Generating code with AI...');
       const chatResponse = await axios.post(`${BACKEND_URL}/chat`, {
         messages: [
+          ...contextMessages,
           { role: 'user', content: projectPrompt }
         ]
       }, {
-        timeout: 60000 // 60 second timeout
+        timeout: 120000 // 120 second timeout for larger model
       });
 
       console.log('💬 Full AI Response:', chatResponse.data.response);
       console.log('💬 Response length:', chatResponse.data.response.length);
-      toast.info('💬 Parsing response...');
+      setBuildStatus('Parsing response...');
 
       // Parse the response
       const generatedSteps = parseXml(chatResponse.data.response);
       console.log('📁 Parsed steps:', generatedSteps);
-      
+
       if (generatedSteps.length === 0) {
-        toast.warning('⚠️ No files generated. The AI response might not be in the correct format.');
+        toast.warning('No files generated. The AI response might not be in the correct format.');
+        setBuildStatus('');
         return;
       }
-      
+
       setSteps(generatedSteps);
-      toast.success(`✅ Generated ${generatedSteps.length} files`);
-      
+      setBuildStatus(`Generated ${generatedSteps.length} files — building preview...`);
+
       // Convert steps to files
       const generatedFiles = convertStepsToFiles(generatedSteps);
       console.log('📄 Generated files:', generatedFiles);
-      
+
       setFiles(generatedFiles);
-      
+
       // Auto-switch to preview if we have files
       if (generatedFiles.length > 0) {
         setActiveTab('preview');
-        toast.success('🎉 Project ready! Check the preview');
       }
-      
+
     } catch (error) {
       console.error('❌ Error generating project:', error);
-      
+      setBuildStatus('');
+
       if (axios.isAxiosError(error)) {
         if (error.code === 'ERR_NETWORK' || error.code === 'ERR_CONNECTION_REFUSED') {
-          toast.error('❌ Cannot connect to backend server. Please ensure it\'s running on port 3000');
+          toast.error('Cannot connect to backend. Is the server running on port 3000?');
         } else if (error.code === 'ECONNABORTED') {
-          toast.error('⏱️ Request timeout. The AI is taking too long to respond.');
+          toast.error('Request timeout. The AI is taking too long to respond.');
         } else if (error.response) {
-          toast.error(`❌ Server error: ${error.response.status} - ${error.response.statusText}`);
+          toast.error(`Server error: ${error.response.status} - ${error.response.statusText}`);
         } else {
-          toast.error('❌ Network error. Please check your connection.');
+          toast.error('Network error. Please check your connection.');
         }
       } else {
-        toast.error('❌ Unexpected error occurred');
+        toast.error('Unexpected error occurred');
       }
     } finally {
       setIsLoading(false);
@@ -117,12 +128,12 @@ function App() {
 
   const convertStepsToFiles = (steps: Step[]): FileItem[] => {
     const fileMap = new Map<string, FileItem>();
-    
+
     steps.forEach(step => {
       if (step.path && step.code) {
         const pathParts = step.path.split('/');
         const fileName = pathParts[pathParts.length - 1];
-        
+
         fileMap.set(step.path, {
           name: fileName,
           type: 'file',
@@ -131,13 +142,13 @@ function App() {
         });
       }
     });
-    
+
     return Array.from(fileMap.values());
   };
 
   if (currentView === 'home') {
     return (
-      <HomePage 
+      <HomePage
         onProjectSelect={handleProjectSelect}
         onGetStarted={() => setCurrentView('builder')}
       />
@@ -160,7 +171,15 @@ function App() {
             AI Website Builder
           </h1>
         </div>
-        
+
+        {/* Inline Build Status */}
+        {buildStatus && (
+          <div className="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-purple-500/5 border border-purple-500/10">
+            <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></div>
+            <span className="text-xs text-purple-300/80 font-medium">{buildStatus}</span>
+          </div>
+        )}
+
         <div className="flex gap-4">
           <input
             type="text"
@@ -184,8 +203,8 @@ function App() {
       <div className="flex-1 flex">
         {/* Left Sidebar - Steps */}
         <div className="w-80 border-r border-gray-900 overflow-y-auto bg-[#0d0d0d]">
-          <StepsList 
-            steps={steps} 
+          <StepsList
+            steps={steps}
             currentStep={currentStep}
             onStepClick={setCurrentStep}
           />
@@ -193,7 +212,7 @@ function App() {
 
         {/* Middle - File Explorer */}
         <div className="w-80 border-r border-gray-900 overflow-y-auto bg-[#0a0a0a]">
-          <FileExplorer 
+          <FileExplorer
             files={files}
             onFileSelect={setSelectedFile}
           />
@@ -202,7 +221,7 @@ function App() {
         {/* Right - Code/Preview */}
         <div className="flex-1 flex flex-col bg-[#0a0a0a]">
           <TabView activeTab={activeTab} onTabChange={setActiveTab} />
-          
+
           <div className="flex-1">
             {activeTab === 'code' ? (
               <CodeEditor file={selectedFile} />
@@ -212,7 +231,7 @@ function App() {
           </div>
         </div>
       </div>
-      
+
       {/* Toast Notifications */}
       <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
     </div>

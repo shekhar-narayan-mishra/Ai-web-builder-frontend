@@ -1,7 +1,7 @@
 import { WebContainer, type FileSystemTree, type WebContainerProcess } from '@webcontainer/api';
 import { useEffect, useRef, useState } from 'react';
 import { FileItem } from '../types';
-import { Loader2, CheckCircle, AlertCircle, Play } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Play, Package, Server, FolderOpen } from 'lucide-react';
 
 interface PreviewFrameProps {
   files: FileItem[];
@@ -15,13 +15,40 @@ interface LogEntry {
   timestamp: Date;
 }
 
+type BuildPhase = 'idle' | 'setup' | 'installing' | 'starting' | 'ready' | 'error';
+
+// Strip ANSI escape codes and control characters from terminal output
+function stripAnsi(text: string): string {
+  return text
+    // Remove all ANSI escape sequences
+    .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/\x1B\][^\x07]*\x07/g, '')
+    .replace(/\x1B[()][AB012]/g, '')
+    .replace(/\x1B[>=<]/g, '')
+    // Remove carriage return based sequences
+    .replace(/\r/g, '')
+    // Remove common npm spinner chars
+    .replace(/^[\\|/\-]\s*$/g, '')
+    .trim();
+}
+
+function isNoisyLine(line: string): boolean {
+  const stripped = stripAnsi(line);
+  if (!stripped || stripped.length === 0) return true;
+  // Filter out single-char spinner frames, ANSI artifacts
+  if (/^[\\|/\-⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\[\]()]+$/.test(stripped)) return true;
+  if (/^\[\d*[A-Za-z]?$/.test(stripped)) return true; // [1G, [0K etc
+  if (stripped.length <= 2) return true;
+  return false;
+}
+
 export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [showLogs, setShowLogs] = useState(true);
+  const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
   const runIdRef = useRef(0);
   const logIdRef = useRef(0);
   const installProcessRef = useRef<WebContainerProcess | null>(null);
@@ -42,7 +69,6 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
       setIsLoading(false);
       setLogs([]);
       setProgress(0);
-      setShowLogs(false);
       return;
     }
 
@@ -68,7 +94,7 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
       type,
       timestamp: new Date()
     };
-  setLogs((prev: LogEntry[]) => [...prev.slice(-9), newLog]);
+    setLogs((prev: LogEntry[]) => [...prev.slice(-9), newLog]);
   };
 
   async function setupProject() {
@@ -85,13 +111,13 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
       setIsLoading(true);
       setUrl('');
       setLogs([]);
-  logIdRef.current = 0;
+      logIdRef.current = 0;
       setProgress(0);
-      setShowLogs(true);
+      setBuildPhase('setup');
       setStatus('Preparing preview workspace...');
       addLog('Setting up preview workspace', 'info');
       setProgress(10);
-      
+
       const fileTree = createReactFileTree(files);
       addLog('Created React file structure', 'success');
       setProgress(25);
@@ -101,6 +127,7 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
         return;
       }
 
+      setBuildPhase('installing');
       setStatus('Installing dependencies...');
       setProgress(40);
       addLog('Installing dependencies...', 'info');
@@ -116,16 +143,17 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
       }
 
       setProgress(70);
-      
+
       if (installCode !== 0) {
         addLog('Dependencies installation failed', 'error');
         setStatus('Install failed!');
         setIsLoading(false);
-        setShowLogs(true);
+        setBuildPhase('error');
         return;
       }
-      
+
       addLog('Dependencies installed successfully', 'success');
+      setBuildPhase('starting');
       setStatus('Starting React dev server...');
       setProgress(85);
       addLog('Starting React development server...', 'info');
@@ -145,7 +173,7 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
           addLog(`Dev server exited with code ${code}`, 'error');
           setStatus('Dev server exited unexpectedly');
           setIsLoading(false);
-          setShowLogs(true);
+          setBuildPhase('error');
         }
       }).catch((error: unknown) => {
         devProcessRef.current = null;
@@ -154,7 +182,7 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
           addLog(`Dev server exit error: ${error}`, 'error');
           setStatus('Dev server error');
           setIsLoading(false);
-          setShowLogs(true);
+          setBuildPhase('error');
         }
       });
 
@@ -164,10 +192,10 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
       addLog(`Setup failed: ${error}`, 'error');
       setStatus(`Error: ${error}`);
       setIsLoading(false);
-      setShowLogs(true);
+      setBuildPhase('error');
     }
   }
-  
+
   async function stopRunningProcesses() {
     const processes: WebContainerProcess[] = [];
     if (installProcessRef.current) {
@@ -207,13 +235,8 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
       setUrl(previewUrl);
       setStatus('Ready!');
       setProgress(100);
+      setBuildPhase('ready');
       setIsLoading(false);
-
-      setTimeout(() => {
-        if (runIdRef.current === runId) {
-          setShowLogs(false);
-        }
-      }, 3000);
     };
 
     const dispose = (webContainer as any).on?.('server-ready', handler);
@@ -250,7 +273,10 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
           const text = typeof value === 'string'
             ? value
             : decoder.decode(value as AllowSharedBufferSource, { stream: true });
-          text.split('\n').map(line => line.trim()).filter(Boolean).forEach(onLine);
+          text.split('\n')
+            .map(line => stripAnsi(line))
+            .filter(line => !isNoisyLine(line))
+            .forEach(onLine);
         }
       }
     } catch (error) {
@@ -285,86 +311,147 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
     );
   }
 
+  const buildSteps = [
+    { phase: 'setup' as BuildPhase, label: 'Setting up workspace', icon: FolderOpen },
+    { phase: 'installing' as BuildPhase, label: 'Installing dependencies', icon: Package },
+    { phase: 'starting' as BuildPhase, label: 'Starting dev server', icon: Server },
+    { phase: 'ready' as BuildPhase, label: 'Preview ready', icon: CheckCircle },
+  ];
+
+  const getPhaseIndex = (phase: BuildPhase) => {
+    switch (phase) {
+      case 'setup': return 0;
+      case 'installing': return 1;
+      case 'starting': return 2;
+      case 'ready': return 3;
+      default: return -1;
+    }
+  };
+
+  const currentPhaseIndex = getPhaseIndex(buildPhase);
+
   return (
     <div className="h-full flex flex-col">
       {/* Status Bar */}
-      <div className="p-4 bg-gray-800 border-b border-gray-700">
-        <div className="flex items-center gap-3 mb-2">
+      <div className="p-3 bg-[#111113] border-b border-gray-800/60">
+        <div className="flex items-center gap-3">
           {getStatusIcon()}
-          <span className="text-sm text-gray-300 font-medium">
-            Status: {status}
+          <span className="text-sm text-gray-400 font-medium">
+            {status || 'Waiting for files...'}
           </span>
           {url && (
             <div className="ml-auto">
-              <div className="flex items-center gap-2 text-xs text-green-400">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                Live Preview Ready
+              <div className="flex items-center gap-2 text-xs text-emerald-400">
+                <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
+                Live Preview
               </div>
             </div>
           )}
         </div>
-        
+
         {isLoading && (
-          <div className="w-full bg-gray-700 rounded-full h-2">
-            <div 
-              className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-500"
-              style={{ width: `${progress}%` }}
+          <div className="mt-2 w-full bg-gray-800 rounded-full h-1 overflow-hidden">
+            <div
+              className="h-1 rounded-full transition-all duration-700 ease-out"
+              style={{
+                width: `${progress}%`,
+                background: 'linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa)'
+              }}
             ></div>
           </div>
         )}
       </div>
-      
-      {showLogs && (isLoading || logs.some(log => log.type === 'error')) && (
-        <div className="bg-gray-900/90 border-b border-gray-700 max-h-48 overflow-y-auto">
-          <div className="p-3">
-            <div className="text-xs text-gray-400 mb-2 font-medium">Build Logs:</div>
-            <div className="space-y-1">
-              {logs.map((log) => (
-                <div key={log.id} className="flex items-start gap-2 text-xs">
-                  <span className="text-gray-500 min-w-[60px]">
-                    {log.timestamp.toLocaleTimeString().slice(-8)}
-                  </span>
-                  <span className={`${
-                    log.type === 'error' ? 'text-red-400' :
-                    log.type === 'success' ? 'text-green-400' :
-                    log.type === 'warning' ? 'text-yellow-400' :
-                    'text-gray-300'
-                  }`}>
-                    {log.text}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-      
+
       {/* Preview Content */}
       <div className="flex-1">
         {url ? (
-          <iframe 
-            src={url} 
+          <iframe
+            src={url}
             className="w-full h-full border-0"
             title="Preview"
           />
         ) : isLoading ? (
-          <div className="flex items-center justify-center h-full bg-gray-800/20">
-            <div className="text-center">
-              <Loader2 className="w-12 h-12 text-blue-400 animate-spin mx-auto mb-4" />
-              <div className="text-lg font-medium text-white mb-2">Building React App</div>
-              <div className="text-sm text-gray-400">Converting to React components...</div>
-              <div className="mt-4 w-64 bg-gray-700 rounded-full h-2 mx-auto">
-                <div 
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${progress}%` }}
-                ></div>
+          <div className="flex items-center justify-center h-full bg-[#0c0c0e]">
+            <div className="w-full max-w-md px-8">
+              {/* Build Steps */}
+              <div className="space-y-3 mb-8">
+                {buildSteps.map((step, index) => {
+                  const isActive = index === currentPhaseIndex;
+                  const isComplete = index < currentPhaseIndex;
+                  const Icon = step.icon;
+
+                  return (
+                    <div
+                      key={step.phase}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-500 ${isActive
+                        ? 'bg-purple-500/8 border-purple-500/20 shadow-sm shadow-purple-500/5'
+                        : isComplete
+                          ? 'bg-emerald-500/5 border-emerald-500/15'
+                          : 'bg-gray-900/30 border-gray-800/30'
+                        }`}
+                    >
+                      {/* Icon */}
+                      <div className={`flex-shrink-0 ${isActive ? 'text-purple-400' : isComplete ? 'text-emerald-400' : 'text-gray-700'
+                        }`}>
+                        {isComplete ? (
+                          <CheckCircle className="w-5 h-5" />
+                        ) : isActive ? (
+                          <div className="relative">
+                            <Icon className="w-5 h-5" />
+                            <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-purple-400 rounded-full build-dot-pulse"></div>
+                          </div>
+                        ) : (
+                          <Icon className="w-5 h-5" />
+                        )}
+                      </div>
+
+                      {/* Label */}
+                      <span className={`text-sm font-medium transition-colors duration-300 ${isActive ? 'text-purple-300' : isComplete ? 'text-emerald-300/80' : 'text-gray-600'
+                        }`}>
+                        {step.label}
+                      </span>
+
+                      {/* Status indicator */}
+                      <div className="ml-auto">
+                        {isActive && (
+                          <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+                        )}
+                        {isComplete && (
+                          <span className="text-[10px] text-emerald-500/60 font-mono">done</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="text-xs text-gray-500 mt-2">{progress}% Complete</div>
+
+              {/* Progress */}
+              <div className="text-center">
+                <div className="w-full bg-gray-800/50 rounded-full h-1.5 mb-3 overflow-hidden">
+                  <div
+                    className="h-1.5 rounded-full transition-all duration-700 ease-out build-progress-bar"
+                    style={{ width: `${progress}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-500 font-mono">{progress}%</p>
+              </div>
+            </div>
+          </div>
+        ) : logs.some(log => log.type === 'error') ? (
+          <div className="flex items-center justify-center h-full bg-[#0c0c0e]">
+            <div className="text-center px-8">
+              <AlertCircle className="w-10 h-10 text-red-400/70 mx-auto mb-3" />
+              <p className="text-red-400/80 text-sm">{status}</p>
+              <div className="mt-4 max-w-lg mx-auto bg-red-500/5 border border-red-500/10 rounded-lg p-3">
+                {logs.filter(l => l.type === 'error').slice(-3).map(log => (
+                  <p key={log.id} className="text-xs text-red-300/60 font-mono">{log.text}</p>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
           <div className="flex items-center justify-center h-full">
-            <div className="text-yellow-400">{status}</div>
+            <div className="text-gray-600 text-sm">{status || 'Generate a project to see preview'}</div>
           </div>
         )}
       </div>
@@ -416,6 +503,10 @@ function createReactFileTree(files: FileItem[]): FileSystemTree {
     console.log('✅ Using existing App at:', appPath);
   }
 
+  // Auto-fix missing imports and broken CSS references across all files
+  fixMissingImports(fileMap);
+  fixBrokenCssImports(fileMap);
+
   const mainCandidates = ['src/main.tsx', 'src/main.ts', 'src/main.jsx', 'src/main.js'];
   const existingMainPath = mainCandidates.find(candidate => fileMap.has(candidate));
   const inferredMainExtension = existingMainPath?.split('.').pop() ?? (appPath.endsWith('.tsx') || appPath.endsWith('.ts') ? 'tsx' : 'jsx');
@@ -450,13 +541,6 @@ function createReactFileTree(files: FileItem[]): FileSystemTree {
       vite: '^5.4.2'
     }
   };
-
-  if (needsTsconfig) {
-    const devDeps = pkg.devDependencies as Record<string, string>;
-    devDeps.typescript = '^5.5.3';
-    devDeps['@types/react'] = '^18.3.5';
-    devDeps['@types/react-dom'] = '^18.3.0';
-  }
 
   const tree: FileSystemTree = {
     'package.json': {
@@ -637,6 +721,133 @@ function normalizePath(path: string): string {
 }
 
 /**
+ * Auto-inject missing import statements.
+ * Scans every .tsx/.jsx file for PascalCase JSX tags that correspond to other
+ * generated files and adds import lines when they are absent.
+ */
+function fixMissingImports(fileMap: Map<string, FlatFile>) {
+  // Build a lookup: component name -> relative import path
+  const componentFiles = new Map<string, string>();
+  for (const path of fileMap.keys()) {
+    if (/\.(tsx|jsx)$/.test(path) && !path.endsWith('main.tsx') && !path.endsWith('main.jsx')) {
+      const basename = path.split('/').pop()!;
+      const name = basename.replace(/\.(tsx|jsx)$/, '');
+      componentFiles.set(name, path);
+    }
+  }
+
+  for (const [filePath, file] of fileMap) {
+    if (!/\.(tsx|jsx)$/.test(filePath)) continue;
+
+    const currentName = filePath.split('/').pop()!.replace(/\.(tsx|jsx)$/, '');
+    const existingImports = new Set<string>();
+
+    // Collect already-imported identifiers
+    const importRegex = /import\s+(?:\{[^}]*\}|(\w+))\s+from\s+['"][^'"]+['"]/g;
+    let m;
+    while ((m = importRegex.exec(file.content)) !== null) {
+      if (m[1]) existingImports.add(m[1]);
+      // named imports
+      const namedMatch = m[0].match(/\{([^}]+)\}/);
+      if (namedMatch) {
+        namedMatch[1].split(',').forEach(n => existingImports.add(n.trim().split(/\s+as\s+/).pop()!));
+      }
+    }
+
+    // Find PascalCase JSX tags used in the file
+    const jsxTagRegex = /<([A-Z][A-Za-z0-9]+)[\s/>]/g;
+    const missingImports: string[] = [];
+
+    while ((m = jsxTagRegex.exec(file.content)) !== null) {
+      const tagName = m[1];
+      if (existingImports.has(tagName)) continue;
+      if (tagName === currentName) continue;
+      if (!componentFiles.has(tagName)) continue;
+
+      existingImports.add(tagName); // prevent duplicates
+      const targetPath = componentFiles.get(tagName)!;
+      const relPath = getRelativeImportPath(filePath, targetPath);
+      missingImports.push(`import ${tagName} from '${relPath}';`);
+    }
+
+    if (missingImports.length > 0) {
+      console.log(`🔧 Auto-adding imports to ${filePath}:`, missingImports);
+      // Insert after existing imports, or at top of file
+      const lastImportIdx = file.content.lastIndexOf('import ');
+      if (lastImportIdx >= 0) {
+        const lineEnd = file.content.indexOf('\n', lastImportIdx);
+        const insertPos = lineEnd >= 0 ? lineEnd + 1 : file.content.length;
+        file.content = file.content.slice(0, insertPos) + missingImports.join('\n') + '\n' + file.content.slice(insertPos);
+      } else {
+        file.content = missingImports.join('\n') + '\n\n' + file.content;
+      }
+    }
+  }
+}
+
+/**
+ * Compute a relative import path from `from` to `to`.
+ */
+function getRelativeImportPath(from: string, to: string): string {
+  const fromParts = from.split('/');
+  fromParts.pop(); // remove filename
+  const toParts = to.split('/');
+  const toFile = toParts.pop()!;
+  const toName = toFile.replace(/\.(tsx|jsx|ts|js)$/, '');
+
+  // Find common prefix
+  let common = 0;
+  while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) {
+    common++;
+  }
+
+  const ups = fromParts.length - common;
+  const prefix = ups > 0 ? '../'.repeat(ups) : './';
+  const remaining = toParts.slice(common);
+  return prefix + [...remaining, toName].join('/');
+}
+
+/**
+ * Remove CSS import lines that reference non-existent CSS files.
+ */
+function fixBrokenCssImports(fileMap: Map<string, FlatFile>) {
+  for (const [filePath, file] of fileMap) {
+    if (!/\.(tsx|jsx|ts|js)$/.test(filePath)) continue;
+
+    const lines = file.content.split('\n');
+    let changed = false;
+
+    const fixedLines = lines.filter(line => {
+      const cssImportMatch = line.match(/import\s+['"](.+\.css)['"]/);
+      if (!cssImportMatch) return true;
+
+      const cssPath = cssImportMatch[1];
+      // Resolve relative to current file
+      const fileParts = filePath.split('/');
+      fileParts.pop();
+      const resolvedParts = [...fileParts];
+
+      for (const seg of cssPath.split('/')) {
+        if (seg === '..') resolvedParts.pop();
+        else if (seg !== '.') resolvedParts.push(seg);
+      }
+
+      const resolvedPath = resolvedParts.join('/');
+      if (!fileMap.has(resolvedPath)) {
+        console.log(`🧹 Removing broken CSS import in ${filePath}: ${cssPath}`);
+        changed = true;
+        return false;
+      }
+      return true;
+    });
+
+    if (changed) {
+      file.content = fixedLines.join('\n');
+    }
+  }
+}
+
+/**
  * Universal converter: Converts ANY vanilla HTML/CSS/JS app to React
  * Works for todo apps, portfolios, weather apps, etc.
  */
@@ -651,14 +862,14 @@ function convertVanillaToReact(fileMap: Map<string, FlatFile>): boolean {
 
   // Find HTML, JS, and CSS files
   const htmlFile = fileMap.get('index.html') || fileMap.get('src/index.html') || fileMap.get('portfolio/index.html');
-  const jsFiles = Array.from(fileMap.entries()).filter(([path]) => 
+  const jsFiles = Array.from(fileMap.entries()).filter(([path]) =>
     path.endsWith('.js') && !path.includes('node_modules') && !path.includes('vite.config')
   );
-  const cssFiles = Array.from(fileMap.entries()).filter(([path]) => 
+  const cssFiles = Array.from(fileMap.entries()).filter(([path]) =>
     path.endsWith('.css') && !path.includes('node_modules') && !path.includes('index.css')
   );
 
-  console.log('📁 Found files:', { 
+  console.log('📁 Found files:', {
     html: !!htmlFile,
     htmlPath: htmlFile ? Array.from(fileMap.keys()).find(k => k.includes('html')) : null,
     jsFiles: jsFiles.map(([path]) => path),
@@ -678,7 +889,7 @@ function convertVanillaToReact(fileMap: Map<string, FlatFile>): boolean {
   const htmlContent = htmlFile.content;
   const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   const bodyContent = bodyMatch ? bodyMatch[1] : htmlContent;
-  
+
   // Extract title
   const titleMatch = htmlContent.match(/<title>([^<]+)<\/title>/i);
   const pageTitle = titleMatch ? titleMatch[1] : 'Generated App';
@@ -780,7 +991,7 @@ export default function App() {
 function generateReactCSS(originalCSS: string, _htmlContent: string): string {
   // Add base styles if not present
   const hasBaseStyles = /body\s*{/.test(originalCSS);
-  
+
   const baseStyles = hasBaseStyles ? '' : `* {
   box-sizing: border-box;
   margin: 0;
