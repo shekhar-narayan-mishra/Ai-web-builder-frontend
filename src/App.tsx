@@ -45,11 +45,18 @@ function App() {
 
       // Get template type first
       setBuildStatus('Loading template...');
+
+      // Show cold-start warning after 10s (Render free tier can take ~30-50s)
+      const coldStartTimer = setTimeout(() => {
+        setBuildStatus('Backend is waking up (free tier cold start)... please wait');
+      }, 10000);
+
       const templateResponse = await axios.post(`${BACKEND_URL}/template`, {
         prompt: projectPrompt
       }, {
-        timeout: 30000
+        timeout: 60000  // 60s timeout for cold starts
       });
+      clearTimeout(coldStartTimer);
 
       console.log('📋 Template response:', templateResponse.data);
 

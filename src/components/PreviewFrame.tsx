@@ -51,8 +51,10 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
+  const [elapsed, setElapsed] = useState(0);
   const runIdRef = useRef(0);
   const logIdRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const installProcessRef = useRef<WebContainerProcess | null>(null);
   const devProcessRef = useRef<WebContainerProcess | null>(null);
   const serverReadyDisposeRef = useRef<(() => void) | null>(null);
@@ -115,6 +117,10 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       setLogs([]);
       logIdRef.current = 0;
       setProgress(0);
+      setElapsed(0);
+      if (timerRef.current) clearInterval(timerRef.current);
+      const startTime = Date.now();
+      timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
       setBuildPhase('setup');
       setStatus('Preparing preview workspace...');
       addLog('Setting up preview workspace', 'info');
@@ -130,15 +136,20 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       }
 
       setBuildPhase('installing');
-      setStatus('Installing dependencies...');
-      setProgress(40);
+      setStatus('Installing dependencies (this takes ~20-30s)...');
+      setProgress(35);
       addLog('Installing dependencies...', 'info');
 
-      const installProcess = await webContainer.spawn('npm', ['install']);
+      const installProcess = await webContainer.spawn('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error']);
       installProcessRef.current = installProcess;
+      // Animate progress during install (35% → 70%)
+      const installProgressInterval = setInterval(() => {
+        setProgress(prev => prev < 68 ? prev + 1 : prev);
+      }, 1200);
       void streamProcessOutput(installProcess, runId, line => addLog(line, 'info'));
 
       const installCode = await installProcess.exit;
+      clearInterval(installProgressInterval);
       installProcessRef.current = null;
       if (runIdRef.current !== runId) {
         return;
@@ -195,6 +206,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       setStatus(`Error: ${error}`);
       setIsLoading(false);
       setBuildPhase('error');
+      if (timerRef.current) clearInterval(timerRef.current);
     }
   }
 
@@ -237,6 +249,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       setUrl(previewUrl);
       setStatus('Ready!');
       setProgress(100);
+      if (timerRef.current) clearInterval(timerRef.current);
       setBuildPhase('ready');
       setIsLoading(false);
     };
@@ -457,7 +470,12 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
                     style={{ width: `${progress}%` }}
                   ></div>
                 </div>
-                <p className="text-xs text-gray-500 font-mono">{progress}%</p>
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-gray-500 font-mono">{progress}%</p>
+                  {elapsed > 0 && (
+                    <p className="text-xs text-gray-600 font-mono">{elapsed}s elapsed</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -557,12 +575,12 @@ function createReactFileTree(files: FileItem[]): FileSystemTree {
       preview: 'vite preview'
     },
     dependencies: {
-      react: '^18.3.1',
-      'react-dom': '^18.3.1'
+      'react': '18.3.1',
+      'react-dom': '18.3.1'
     },
     devDependencies: {
-      '@vitejs/plugin-react': '^4.3.1',
-      vite: '^5.4.2'
+      '@vitejs/plugin-react-swc': '3.7.2',
+      'vite': '5.4.2'
     }
   };
 
@@ -575,7 +593,7 @@ function createReactFileTree(files: FileItem[]): FileSystemTree {
     'vite.config.ts': {
       file: {
         contents: `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import react from '@vitejs/plugin-react-swc';
 
 export default defineConfig({
   plugins: [react()],
