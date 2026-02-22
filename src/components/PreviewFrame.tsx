@@ -537,12 +537,29 @@ ${allCSS}
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      console.error('❌ [Preview Runtime Error]:', msg, 'at', line + ':' + col);
+    };
+  </script>
   <script type="text/babel" data-type="module">
+    console.log('⚡ [Preview] Babel starting transpilation...');
+    try {
 ${allComponentCode}
 
-// Render
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(React.createElement(App));
+      // Render
+      const rootEl = document.getElementById('root');
+      if (rootEl) {
+        const root = ReactDOM.createRoot(rootEl);
+        root.render(React.createElement(App));
+        console.log('✅ [Preview] App rendered successfully');
+      } else {
+        console.error('❌ [Preview] Root element #root not found');
+      }
+    } catch (err) {
+      console.error('❌ [Preview Babel/Render Error]:', err);
+      document.body.innerHTML = '<div style="padding: 20px; color: red; font-family: sans-serif;"><h3>Render Error</h3><pre>' + err.message + '</pre></div>';
+    }
   </script>
 </body>
 </html>`;
