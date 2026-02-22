@@ -703,19 +703,19 @@ server.listen(3000, () => {
  */
 function cleanComponentForCDN(code: string): string {
   return code
-    // Remove import lines
-    .replace(/^import\s+.*$/gm, '')
+    // Remove imports: `import ... from '...'`
+    .replace(/import\s+[\s\S]*?from\s+['"][^'"]+['"]\s*;?/g, '')
+    // Remove imports: `import '...'`
+    .replace(/import\s+['"][^'"]+['"]\s*;?/g, '')
     // Convert `export default function X` → `function X`
     .replace(/export\s+default\s+function\s+/g, 'function ')
     // Convert `export default` (for arrow/const) → remove export default
     .replace(/export\s+default\s+/g, '')
     // Remove named exports
-    .replace(/export\s+(?:const|let|var|function|class)\s+/g, (match) => {
-      return match.replace('export ', '');
-    })
-    .replace(/^export\s+\{[^}]*\};?\s*$/gm, '')
+    .replace(/export\s+(const|let|var|function|class)\s+/g, '$1 ')
+    .replace(/export\s+\{[^}]*\};?\s*/g, '')
     // Strip basic TypeScript type annotations
-    .replace(/:\s*React\.FC\b/g, '')
+    .replace(/:\s*React\.FC(?:<[^>]+>)?\b/g, '')
     .replace(/:\s*React\.ReactNode\b/g, '')
     .replace(/<[A-Za-z]+\[\]>/g, '') // Array<Type>
     .replace(/:\s*string\b/g, '')
