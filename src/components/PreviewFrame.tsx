@@ -3,19 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { FileItem } from '../types';
 import { Loader2, CheckCircle, AlertCircle, Play, Package, Server, FolderOpen } from 'lucide-react';
 
-// ── Module-level caching to avoid re-installing deps on each build ──
-let lastInstalledPkgHash: string | null = null;
-let hasBootstrapped = false; // true after the very first successful npm install
-
-function simplePkgHash(pkg: Record<string, unknown>): string {
-  // Hash based on dependency versions only – if they don't change, skip install
-  const deps = JSON.stringify(pkg.dependencies ?? {}) + JSON.stringify(pkg.devDependencies ?? {});
-  let h = 0;
-  for (let i = 0; i < deps.length; i++) {
-    h = ((h << 5) - h + deps.charCodeAt(i)) | 0;
-  }
-  return String(h);
-}
+// ── Module-level flag: skip re-mount of server.js on rebuilds ──
+let hasServerFile = false;
 
 interface PreviewFrameProps {
   files: FileItem[];
@@ -36,14 +25,11 @@ type BuildPhase = 'idle' | 'setup' | 'installing' | 'starting' | 'ready' | 'erro
 // Strip ANSI escape codes and control characters from terminal output
 function stripAnsi(text: string): string {
   return text
-    // Remove all ANSI escape sequences
     .replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
     .replace(/\x1B\][^\x07]*\x07/g, '')
     .replace(/\x1B[()][AB012]/g, '')
     .replace(/\x1B[>=<]/g, '')
-    // Remove carriage return based sequences
     .replace(/\r/g, '')
-    // Remove common npm spinner chars
     .replace(/^[\\|/\-]\s*$/g, '')
     .trim();
 }
@@ -51,9 +37,8 @@ function stripAnsi(text: string): string {
 function isNoisyLine(line: string): boolean {
   const stripped = stripAnsi(line);
   if (!stripped || stripped.length === 0) return true;
-  // Filter out single-char spinner frames, ANSI artifacts
   if (/^[\\|/\-⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\[\]()]+$/.test(stripped)) return true;
-  if (/^\[\d*[A-Za-z]?$/.test(stripped)) return true; // [1G, [0K etc
+  if (/^\[\d*[A-Za-z]?$/.test(stripped)) return true;
   if (stripped.length <= 2) return true;
   return false;
 }
@@ -67,7 +52,6 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
   const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
   const runIdRef = useRef(0);
   const logIdRef = useRef(0);
-  const installProcessRef = useRef<WebContainerProcess | null>(null);
   const devProcessRef = useRef<WebContainerProcess | null>(null);
   const serverReadyDisposeRef = useRef<(() => void) | null>(null);
 
@@ -95,9 +79,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
     return () => {
       serverReadyDisposeRef.current?.();
       serverReadyDisposeRef.current = null;
-      void installProcessRef.current?.kill();
       void devProcessRef.current?.kill();
-      installProcessRef.current = null;
       devProcessRef.current = null;
     };
   }, []);
@@ -119,7 +101,11 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
         return;
       }
 
-      await stopRunningProcesses();
+      // Kill previous dev server
+      if (devProcessRef.current) {
+        try { await devProcessRef.current.kill(); } catch { }
+        devProcessRef.current = null;
+      }
 
       const runId = Date.now();
       runIdRef.current = runId;
@@ -130,88 +116,29 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       logIdRef.current = 0;
       setProgress(0);
       setBuildPhase('setup');
-      setStatus('Preparing preview workspace...');
+      setStatus('Preparing preview...');
       addLog('Setting up preview workspace', 'info');
-      setProgress(10);
+      setProgress(15);
 
-      const fileTree = createReactFileTree(files);
-      addLog('Created React file structure', 'success');
+      const fileTree = createFileTree(files);
+      addLog('Created file structure', 'success');
+      setProgress(30);
 
-      // ── Determine if we can skip npm install ──
-      const pkgNode = fileTree['package.json'];
-      const pkgContents = pkgNode && 'file' in pkgNode ? (pkgNode as any).file.contents : '';
-      let currentPkgHash: string | null = null;
-      try {
-        currentPkgHash = simplePkgHash(JSON.parse(pkgContents));
-      } catch { /* parse failure → force install */ }
+      // Mount all files (no npm install needed!)
+      await webContainer.mount(fileTree);
+      addLog('Mounted files to WebContainer', 'success');
+      if (runIdRef.current !== runId) return;
 
-      const depsChanged = !currentPkgHash || currentPkgHash !== lastInstalledPkgHash;
-      const needsInstall = depsChanged || !hasBootstrapped;
+      setProgress(60);
 
-      if (needsInstall) {
-        // ── Full mount + install (first build or deps changed) ──
-        setProgress(20);
-        await webContainer.mount(fileTree);
-        addLog('Mounted files to WebContainer', 'success');
-        if (runIdRef.current !== runId) return;
-
-        setBuildPhase('installing');
-        setStatus('Installing dependencies...');
-        setProgress(35);
-        addLog('Installing dependencies...', 'info');
-
-        const installProcess = await webContainer.spawn('npm', [
-          'install', '--no-audit', '--no-fund', '--prefer-offline', '--loglevel=error'
-        ]);
-        installProcessRef.current = installProcess;
-        const installProgressInterval = setInterval(() => {
-          setProgress(prev => prev < 68 ? prev + 1 : prev);
-        }, 800);
-        void streamProcessOutput(installProcess, runId, line => addLog(line, 'info'));
-
-        const installCode = await installProcess.exit;
-        clearInterval(installProgressInterval);
-        installProcessRef.current = null;
-        if (runIdRef.current !== runId) return;
-
-        setProgress(70);
-
-        if (installCode !== 0) {
-          addLog('Dependencies installation failed', 'error');
-          setStatus('Install failed!');
-          setIsLoading(false);
-          setBuildPhase('error');
-          return;
-        }
-
-        addLog('Dependencies installed successfully', 'success');
-        lastInstalledPkgHash = currentPkgHash;
-        hasBootstrapped = true;
-      } else {
-        // ── Fast path: deps already installed, only re-mount source files ──
-        setProgress(30);
-        addLog('Dependencies cached — skipping install ⚡', 'success');
-
-        // Mount only source files (skip package.json, node_modules, config that already exist)
-        const srcTree: FileSystemTree = {};
-        for (const [key, value] of Object.entries(fileTree)) {
-          if (key === 'package.json') continue; // unchanged
-          srcTree[key] = value;
-        }
-        await webContainer.mount(srcTree);
-        addLog('Updated source files', 'success');
-        if (runIdRef.current !== runId) return;
-
-        setProgress(70);
-        setBuildPhase('installing'); // skip visually through install step
-      }
-
+      // Skip straight to starting server — no install step!
       setBuildPhase('starting');
-      setStatus('Starting React dev server...');
-      setProgress(85);
-      addLog('Starting React development server...', 'info');
+      setStatus('Starting preview server...');
+      setProgress(80);
+      addLog('Starting preview server...', 'info');
 
-      const devProcess = await webContainer.spawn('npm', ['run', 'dev']);
+      // Start the lightweight Node.js HTTP server (no npm deps)
+      const devProcess = await webContainer.spawn('node', ['server.js']);
       devProcessRef.current = devProcess;
       void streamProcessOutput(devProcess, runId, line => addLog(line, 'info'));
 
@@ -219,16 +146,16 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
         devProcessRef.current = null;
         if (runIdRef.current !== runId) return;
         if (code !== 0) {
-          addLog(`Dev server exited with code ${code}`, 'error');
-          setStatus('Dev server exited unexpectedly');
+          addLog(`Server exited with code ${code}`, 'error');
+          setStatus('Server exited unexpectedly');
           setIsLoading(false);
           setBuildPhase('error');
         }
       }).catch((error: unknown) => {
         devProcessRef.current = null;
         if (runIdRef.current === runId) {
-          addLog(`Dev server exit error: ${error}`, 'error');
-          setStatus('Dev server error');
+          addLog(`Server error: ${error}`, 'error');
+          setStatus('Server error');
           setIsLoading(false);
           setBuildPhase('error');
         }
@@ -242,27 +169,6 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       setIsLoading(false);
       setBuildPhase('error');
     }
-  }
-
-  async function stopRunningProcesses() {
-    const processes: WebContainerProcess[] = [];
-    if (installProcessRef.current) {
-      processes.push(installProcessRef.current);
-    }
-    if (devProcessRef.current) {
-      processes.push(devProcessRef.current);
-    }
-
-    installProcessRef.current = null;
-    devProcessRef.current = null;
-
-    await Promise.all(processes.map(async process => {
-      try {
-        await process.kill();
-      } catch (error) {
-        console.error('Failed to stop WebContainer process', error);
-      }
-    }));
   }
 
   function attachServerReadyListener(runId: number) {
@@ -279,7 +185,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       }
 
       addLog(`Server started on port ${port}`, 'success');
-      addLog('React preview is ready', 'success');
+      addLog('Preview is ready!', 'success');
       setUrl(previewUrl);
       setStatus('Ready!');
       setProgress(100);
@@ -383,17 +289,16 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
 
   const buildSteps = [
     { phase: 'setup' as BuildPhase, label: 'Setting up workspace', icon: FolderOpen },
-    { phase: 'installing' as BuildPhase, label: 'Installing dependencies', icon: Package },
-    { phase: 'starting' as BuildPhase, label: 'Starting dev server', icon: Server },
+    { phase: 'starting' as BuildPhase, label: 'Starting server', icon: Server },
     { phase: 'ready' as BuildPhase, label: 'Preview ready', icon: CheckCircle },
   ];
 
   const getPhaseIndex = (phase: BuildPhase) => {
     switch (phase) {
       case 'setup': return 0;
-      case 'installing': return 1;
-      case 'starting': return 2;
-      case 'ready': return 3;
+      case 'installing': return 0; // skip — map to setup
+      case 'starting': return 1;
+      case 'ready': return 2;
       default: return -1;
     }
   };
@@ -536,7 +441,13 @@ type FlatFile = {
   content: string;
 };
 
-function createReactFileTree(files: FileItem[]): FileSystemTree {
+/**
+ * Create a file tree that uses ESM CDN imports — NO npm install needed!
+ * React/ReactDOM are loaded from esm.sh CDN via importmap.
+ * JSX is transpiled using Babel standalone in the browser.
+ * A tiny Node.js HTTP server (zero npm deps) serves the files.
+ */
+function createFileTree(files: FileItem[]): FileSystemTree {
   const flatFiles = flattenFileItems(files);
   const fileMap = new Map<string, FlatFile>();
 
@@ -550,138 +461,253 @@ function createReactFileTree(files: FileItem[]): FileSystemTree {
     }
   });
 
-  // Try to convert vanilla HTML/CSS/JS to React
-  const wasPatched = convertVanillaToReact(fileMap);
-  console.log('🔧 Conversion result:', wasPatched);
-
-  const hasTypeScript = Array.from(fileMap.keys()).some(path => path.endsWith('.ts') || path.endsWith('.tsx'));
-
-  const appCandidates = ['src/App.tsx', 'src/App.ts', 'src/App.jsx', 'src/App.js'];
-  const existingAppPath = appCandidates.find(candidate => fileMap.has(candidate));
-  const inferredAppExtension = existingAppPath?.split('.').pop() ?? (hasTypeScript ? 'tsx' : 'jsx');
-  const appExtension = inferredAppExtension === 'ts' ? 'tsx' : inferredAppExtension === 'js' ? 'jsx' : inferredAppExtension;
-  const appPath = existingAppPath ?? `src/App.${appExtension}`;
-
-  console.log('📂 App path check:', { appPath, exists: fileMap.has(appPath), wasPatched });
-
-  // Only add default App if no App exists AND we didn't just patch one
-  if (!fileMap.has(appPath) && !wasPatched) {
-    console.log('📝 Adding default App.tsx placeholder');
-    fileMap.set(appPath, {
-      path: appPath,
-      content: defaultAppContent(appExtension === 'tsx' ? 'tsx' : 'jsx')
-    });
-  } else if (fileMap.has(appPath)) {
-    console.log('✅ Using existing App at:', appPath);
-  }
-
-  // Auto-fix missing imports and broken CSS references across all files
-  fixMissingImports(fileMap);
-  fixBrokenCssImports(fileMap);
-
-  const mainCandidates = ['src/main.tsx', 'src/main.ts', 'src/main.jsx', 'src/main.js'];
-  const existingMainPath = mainCandidates.find(candidate => fileMap.has(candidate));
-  const inferredMainExtension = existingMainPath?.split('.').pop() ?? (appPath.endsWith('.tsx') || appPath.endsWith('.ts') ? 'tsx' : 'jsx');
-  const mainExtension = inferredMainExtension === 'ts' ? 'tsx' : inferredMainExtension === 'js' ? 'jsx' : inferredMainExtension;
-  const mainPath = existingMainPath ?? `src/main.${mainExtension}`;
-
-  if (!fileMap.has(mainPath)) {
-    fileMap.set(mainPath, {
-      path: mainPath,
-      content: defaultMainContent()
-    });
-  }
-
-  const needsTsconfig = Array.from(fileMap.keys()).some(path => path.endsWith('.ts') || path.endsWith('.tsx'));
-  const scriptEntry = `/${mainPath}`;
-
-  const pkg: Record<string, unknown> = {
-    name: 'ai-generated-app',
-    private: true,
-    type: 'module',
-    scripts: {
-      dev: 'vite --host',
-      build: 'vite build',
-      preview: 'vite preview'
-    },
-    dependencies: {
-      'react': '18.3.1',
-      'react-dom': '18.3.1'
-    },
-    devDependencies: {
-      '@vitejs/plugin-react-swc': '3.7.2',
-      'vite': '5.4.2'
+  // Collect all CSS content
+  const cssFiles: string[] = [];
+  for (const [path, file] of fileMap) {
+    if (path.endsWith('.css')) {
+      cssFiles.push(file.content);
     }
-  };
-
-  const tree: FileSystemTree = {
-    'package.json': {
-      file: {
-        contents: JSON.stringify(pkg, null, 2)
-      }
-    },
-    'vite.config.ts': {
-      file: {
-        contents: `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react-swc';
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    port: 3000
   }
-});`
-      }
-    },
-    'index.html': {
-      file: {
-        contents: `<!DOCTYPE html>
+  const allCSS = cssFiles.join('\n\n');
+
+  // Collect all component files (tsx/jsx/ts/js)
+  const componentFiles: { path: string; content: string }[] = [];
+  for (const [path, file] of fileMap) {
+    if (/\.(tsx|jsx|ts|js)$/.test(path) && !path.includes('node_modules')) {
+      componentFiles.push({ path, content: file.content });
+    }
+  }
+
+  // Find the main App component content
+  let appContent = '';
+  const appCandidates = ['src/App.tsx', 'src/App.jsx', 'src/App.ts', 'src/App.js', 'App.tsx', 'App.jsx'];
+  for (const candidate of appCandidates) {
+    if (fileMap.has(candidate)) {
+      appContent = fileMap.get(candidate)!.content;
+      break;
+    }
+  }
+
+  // If no App found, check for index.html (vanilla site)
+  const htmlFile = fileMap.get('index.html') || fileMap.get('src/index.html');
+  if (!appContent && htmlFile) {
+    // Vanilla HTML/CSS/JS — serve as-is
+    return createVanillaFileTree(fileMap);
+  }
+
+  // If no App and no HTML, create a simple one
+  if (!appContent) {
+    appContent = `
+function App() {
+  return React.createElement('div', { style: { padding: '2rem', fontFamily: 'system-ui, sans-serif' } },
+    React.createElement('h1', null, 'Generated Preview'),
+    React.createElement('p', null, 'Update the generated files to refresh this preview.')
+  );
+}
+`;
+  }
+
+  // Clean the App content: remove import/export statements (CDN handles React)
+  const cleanedApp = cleanComponentForCDN(appContent);
+
+  // Gather other components
+  const otherComponents: string[] = [];
+  for (const comp of componentFiles) {
+    const isApp = appCandidates.some(c => comp.path === c);
+    if (!isApp && !comp.path.includes('main.')) {
+      otherComponents.push(cleanComponentForCDN(comp.content));
+    }
+  }
+
+  const allComponentCode = [...otherComponents, cleanedApp].join('\n\n');
+
+  // Build the HTML file with CDN-loaded React
+  const indexHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Generated App</title>
+  <style>
+${allCSS}
+  </style>
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="${scriptEntry}"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel" data-type="module">
+${allComponentCode}
+
+// Render
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+  </script>
 </body>
-</html>`
-      }
+</html>`;
+
+  // Tiny Node.js HTTP server — zero npm dependencies!
+  const serverJs = `
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const MIME = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
+
+const server = http.createServer((req, res) => {
+  let filePath = '.' + (req.url === '/' ? '/index.html' : req.url);
+  const ext = path.extname(filePath);
+  const contentType = MIME[ext] || 'application/octet-stream';
+
+  fs.readFile(filePath, (err, content) => {
+    if (err) {
+      // Fallback to index.html for SPA routing
+      fs.readFile('./index.html', (err2, fallback) => {
+        if (err2) {
+          res.writeHead(404);
+          res.end('Not found');
+        } else {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(fallback);
+        }
+      });
+    } else {
+      res.writeHead(200, { 'Content-Type': contentType });
+      res.end(content);
+    }
+  });
+});
+
+server.listen(3000, () => {
+  console.log('Server running on port 3000');
+});
+`;
+
+  const tree: FileSystemTree = {
+    'index.html': {
+      file: { contents: indexHtml }
+    },
+    'server.js': {
+      file: { contents: serverJs }
     }
   };
 
-  if (needsTsconfig) {
-    tree['tsconfig.json'] = {
-      file: {
-        contents: JSON.stringify({
-          compilerOptions: {
-            target: 'ES2020',
-            useDefineForClassFields: true,
-            module: 'ESNext',
-            lib: ['ES2020', 'DOM'],
-            moduleResolution: 'Bundler',
-            jsx: 'react-jsx',
-            strict: true,
-            esModuleInterop: true,
-            skipLibCheck: true
-          },
-          include: ['src']
-        }, null, 2)
-      }
-    };
-  }
-
-  for (const file of fileMap.values()) {
-    if (!file.path || ['package.json', 'vite.config.ts', 'index.html', 'tsconfig.json'].includes(file.path)) {
-      continue;
-    }
-
-    insertFileIntoTree(tree, file.path.split('/'), file.content);
+  // Also mount any static assets (images, fonts, etc.)
+  for (const [filePath, file] of fileMap) {
+    if (filePath.endsWith('.css') || /\.(tsx|jsx|ts|js)$/.test(filePath)) continue;
+    if (filePath === 'index.html' || filePath === 'package.json') continue;
+    if (filePath.includes('node_modules')) continue;
+    insertFileIntoTree(tree, filePath.split('/'), file.content);
   }
 
   return tree;
+}
+
+/**
+ * For vanilla HTML/CSS/JS projects — serve as-is with the tiny HTTP server
+ */
+function createVanillaFileTree(fileMap: Map<string, FlatFile>): FileSystemTree {
+  const serverJs = `
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const MIME = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
+
+const server = http.createServer((req, res) => {
+  let filePath = '.' + (req.url === '/' ? '/index.html' : req.url);
+  const ext = path.extname(filePath);
+  const contentType = MIME[ext] || 'application/octet-stream';
+
+  fs.readFile(filePath, (err, content) => {
+    if (err) {
+      fs.readFile('./index.html', (err2, fallback) => {
+        if (err2) {
+          res.writeHead(404);
+          res.end('Not found');
+        } else {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(fallback);
+        }
+      });
+    } else {
+      res.writeHead(200, { 'Content-Type': contentType });
+      res.end(content);
+    }
+  });
+});
+
+server.listen(3000, () => {
+  console.log('Server running on port 3000');
+});
+`;
+
+  const tree: FileSystemTree = {
+    'server.js': {
+      file: { contents: serverJs }
+    }
+  };
+
+  // Mount all user files as-is
+  for (const [filePath, file] of fileMap) {
+    if (filePath === 'package.json') continue;
+    if (filePath.includes('node_modules')) continue;
+    insertFileIntoTree(tree, filePath.split('/'), file.content);
+  }
+
+  return tree;
+}
+
+/**
+ * Clean a React component for CDN usage:
+ * - Remove import statements (React is loaded via CDN script tag)
+ * - Remove export statements
+ * - Convert `export default function X` to `function X`
+ * - Strip TypeScript type annotations (basic)
+ */
+function cleanComponentForCDN(code: string): string {
+  return code
+    // Remove import lines
+    .replace(/^import\s+.*$/gm, '')
+    // Convert `export default function X` → `function X`
+    .replace(/export\s+default\s+function\s+/g, 'function ')
+    // Convert `export default` (for arrow/const) → remove export default
+    .replace(/export\s+default\s+/g, '')
+    // Remove named exports
+    .replace(/export\s+(?:const|let|var|function|class)\s+/g, (match) => {
+      return match.replace('export ', '');
+    })
+    .replace(/^export\s+\{[^}]*\};?\s*$/gm, '')
+    // Strip basic TypeScript type annotations
+    .replace(/:\s*React\.FC\b/g, '')
+    .replace(/:\s*React\.ReactNode\b/g, '')
+    .replace(/<[A-Za-z]+\[\]>/g, '') // Array<Type>
+    .replace(/:\s*string\b/g, '')
+    .replace(/:\s*number\b/g, '')
+    .replace(/:\s*boolean\b/g, '')
+    .replace(/:\s*any\b/g, '')
+    .replace(/interface\s+\w+\s*\{[^}]*\}/g, '') // Remove interface declarations
+    .replace(/type\s+\w+\s*=\s*[^;]+;/g, '') // Remove type aliases
+    .trim();
 }
 
 function flattenFileItems(items: FileItem[], parentPath = ''): FlatFile[] {
@@ -739,355 +765,6 @@ function insertFileIntoTree(tree: FileSystemTree, segments: string[], contents: 
   insertFileIntoTree((tree[segment] as any).directory, rest, contents);
 }
 
-function defaultAppContent(extension: 'tsx' | 'jsx'): string {
-  if (extension === 'tsx') {
-    return `import React from 'react';
-
-const App: React.FC = () => (
-  <main style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif' }}>
-    <h1>Generated Preview</h1>
-    <p>Update the generated files to refresh this preview.</p>
-  </main>
-);
-
-export default App;
-`;
-  }
-
-  return `import React from 'react';
-
-function App() {
-  return (
-    <main style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif' }}>
-      <h1>Generated Preview</h1>
-      <p>Update the generated files to refresh this preview.</p>
-    </main>
-  );
-}
-
-export default App;
-`;
-}
-
-function defaultMainContent(): string {
-  return `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-
-const rootElement = document.getElementById('root');
-
-if (!rootElement) {
-  throw new Error('Root element not found');
-}
-
-ReactDOM.createRoot(rootElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-`;
-}
-
 function normalizePath(path: string): string {
   return path.replace(/^\/+/g, '').replace(/\\/g, '/');
-}
-
-/**
- * Auto-inject missing import statements.
- * Scans every .tsx/.jsx file for PascalCase JSX tags that correspond to other
- * generated files and adds import lines when they are absent.
- */
-function fixMissingImports(fileMap: Map<string, FlatFile>) {
-  // Build a lookup: component name -> relative import path
-  const componentFiles = new Map<string, string>();
-  for (const path of fileMap.keys()) {
-    if (/\.(tsx|jsx)$/.test(path) && !path.endsWith('main.tsx') && !path.endsWith('main.jsx')) {
-      const basename = path.split('/').pop()!;
-      const name = basename.replace(/\.(tsx|jsx)$/, '');
-      componentFiles.set(name, path);
-    }
-  }
-
-  for (const [filePath, file] of fileMap) {
-    if (!/\.(tsx|jsx)$/.test(filePath)) continue;
-
-    const currentName = filePath.split('/').pop()!.replace(/\.(tsx|jsx)$/, '');
-    const existingImports = new Set<string>();
-
-    // Collect already-imported identifiers
-    const importRegex = /import\s+(?:\{[^}]*\}|(\w+))\s+from\s+['"][^'"]+['"]/g;
-    let m;
-    while ((m = importRegex.exec(file.content)) !== null) {
-      if (m[1]) existingImports.add(m[1]);
-      // named imports
-      const namedMatch = m[0].match(/\{([^}]+)\}/);
-      if (namedMatch) {
-        namedMatch[1].split(',').forEach(n => existingImports.add(n.trim().split(/\s+as\s+/).pop()!));
-      }
-    }
-
-    // Find PascalCase JSX tags used in the file
-    const jsxTagRegex = /<([A-Z][A-Za-z0-9]+)[\s/>]/g;
-    const missingImports: string[] = [];
-
-    while ((m = jsxTagRegex.exec(file.content)) !== null) {
-      const tagName = m[1];
-      if (existingImports.has(tagName)) continue;
-      if (tagName === currentName) continue;
-      if (!componentFiles.has(tagName)) continue;
-
-      existingImports.add(tagName); // prevent duplicates
-      const targetPath = componentFiles.get(tagName)!;
-      const relPath = getRelativeImportPath(filePath, targetPath);
-      missingImports.push(`import ${tagName} from '${relPath}';`);
-    }
-
-    if (missingImports.length > 0) {
-      console.log(`🔧 Auto-adding imports to ${filePath}:`, missingImports);
-      // Insert after existing imports, or at top of file
-      const lastImportIdx = file.content.lastIndexOf('import ');
-      if (lastImportIdx >= 0) {
-        const lineEnd = file.content.indexOf('\n', lastImportIdx);
-        const insertPos = lineEnd >= 0 ? lineEnd + 1 : file.content.length;
-        file.content = file.content.slice(0, insertPos) + missingImports.join('\n') + '\n' + file.content.slice(insertPos);
-      } else {
-        file.content = missingImports.join('\n') + '\n\n' + file.content;
-      }
-    }
-  }
-}
-
-/**
- * Compute a relative import path from `from` to `to`.
- */
-function getRelativeImportPath(from: string, to: string): string {
-  const fromParts = from.split('/');
-  fromParts.pop(); // remove filename
-  const toParts = to.split('/');
-  const toFile = toParts.pop()!;
-  const toName = toFile.replace(/\.(tsx|jsx|ts|js)$/, '');
-
-  // Find common prefix
-  let common = 0;
-  while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) {
-    common++;
-  }
-
-  const ups = fromParts.length - common;
-  const prefix = ups > 0 ? '../'.repeat(ups) : './';
-  const remaining = toParts.slice(common);
-  return prefix + [...remaining, toName].join('/');
-}
-
-/**
- * Remove CSS import lines that reference non-existent CSS files.
- */
-function fixBrokenCssImports(fileMap: Map<string, FlatFile>) {
-  for (const [filePath, file] of fileMap) {
-    if (!/\.(tsx|jsx|ts|js)$/.test(filePath)) continue;
-
-    const lines = file.content.split('\n');
-    let changed = false;
-
-    const fixedLines = lines.filter(line => {
-      const cssImportMatch = line.match(/import\s+['"](.+\.css)['"]/);
-      if (!cssImportMatch) return true;
-
-      const cssPath = cssImportMatch[1];
-      // Resolve relative to current file
-      const fileParts = filePath.split('/');
-      fileParts.pop();
-      const resolvedParts = [...fileParts];
-
-      for (const seg of cssPath.split('/')) {
-        if (seg === '..') resolvedParts.pop();
-        else if (seg !== '.') resolvedParts.push(seg);
-      }
-
-      const resolvedPath = resolvedParts.join('/');
-      if (!fileMap.has(resolvedPath)) {
-        console.log(`🧹 Removing broken CSS import in ${filePath}: ${cssPath}`);
-        changed = true;
-        return false;
-      }
-      return true;
-    });
-
-    if (changed) {
-      file.content = fixedLines.join('\n');
-    }
-  }
-}
-
-/**
- * Universal converter: Converts ANY vanilla HTML/CSS/JS app to React
- * Works for todo apps, portfolios, weather apps, etc.
- */
-function convertVanillaToReact(fileMap: Map<string, FlatFile>): boolean {
-  // Don't convert if React App already exists
-  if (fileMap.has('src/App.tsx') || fileMap.has('src/App.jsx')) {
-    console.log('✅ React app already exists, skipping conversion');
-    return false;
-  }
-
-  console.log('🔍 Checking for vanilla HTML/CSS/JS app. Available files:', Array.from(fileMap.keys()));
-
-  // Find HTML, JS, and CSS files
-  const htmlFile = fileMap.get('index.html') || fileMap.get('src/index.html') || fileMap.get('portfolio/index.html');
-  const jsFiles = Array.from(fileMap.entries()).filter(([path]) =>
-    path.endsWith('.js') && !path.includes('node_modules') && !path.includes('vite.config')
-  );
-  const cssFiles = Array.from(fileMap.entries()).filter(([path]) =>
-    path.endsWith('.css') && !path.includes('node_modules') && !path.includes('index.css')
-  );
-
-  console.log('📁 Found files:', {
-    html: !!htmlFile,
-    htmlPath: htmlFile ? Array.from(fileMap.keys()).find(k => k.includes('html')) : null,
-    jsFiles: jsFiles.map(([path]) => path),
-    cssFiles: cssFiles.map(([path]) => path),
-    allFiles: Array.from(fileMap.keys())
-  });
-
-  // Must have at least HTML to convert
-  if (!htmlFile) {
-    console.log('❌ No HTML file found, cannot convert. Available:', Array.from(fileMap.keys()));
-    return false;
-  }
-
-  console.log('✅ Converting vanilla app to React!');
-
-  // Extract body content from HTML
-  const htmlContent = htmlFile.content;
-  const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  const bodyContent = bodyMatch ? bodyMatch[1] : htmlContent;
-
-  // Extract title
-  const titleMatch = htmlContent.match(/<title>([^<]+)<\/title>/i);
-  const pageTitle = titleMatch ? titleMatch[1] : 'Generated App';
-
-  // Remove script tags from body content
-  const cleanBodyContent = bodyContent.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-
-  // Combine all CSS
-  const combinedCSS = cssFiles.map(([, file]) => file.content).join('\n\n');
-
-  // Combine all JS (we'll convert to React hooks)
-  const combinedJS = jsFiles.map(([, file]) => file.content).join('\n\n');
-
-  // Generate React component
-  const reactApp = generateReactComponent(cleanBodyContent, combinedJS, pageTitle);
-  const reactCSS = generateReactCSS(combinedCSS, cleanBodyContent);
-
-  // Add React files
-  fileMap.set('src/App.tsx', {
-    path: 'src/App.tsx',
-    content: reactApp
-  });
-
-  fileMap.set('src/App.css', {
-    path: 'src/App.css',
-    content: reactCSS
-  });
-
-  // Remove all vanilla files
-  fileMap.delete('index.html');
-  fileMap.delete('src/index.html');
-  jsFiles.forEach(([path]) => fileMap.delete(path));
-  cssFiles.forEach(([path]) => fileMap.delete(path));
-
-  console.log('✅ Successfully converted vanilla app to React!');
-  console.log('📦 New files:', Array.from(fileMap.keys()));
-
-  return true;
-}
-
-/**
- * Generate React component from HTML and JS
- */
-function generateReactComponent(htmlContent: string, jsContent: string, title: string): string {
-  // Clean and convert HTML to JSX-friendly format
-  let jsxContent = htmlContent
-    .replace(/class=/g, 'className=')
-    .replace(/for=/g, 'htmlFor=')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .trim();
-
-  // Detect if there's dynamic content that needs state
-  const needsState = /addEventListener|getElementById|querySelector|fetch|innerHTML/.test(jsContent);
-
-  if (needsState) {
-    return `import { useEffect, useState } from 'react';
-import './App.css';
-
-export default function App() {
-  const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Initialize app
-    setLoading(false);
-    
-    // Note: Original JavaScript code needs manual conversion to React
-    // The vanilla JS used DOM manipulation which doesn't work in React
-    // Please convert event listeners and DOM queries to React patterns
-  }, []);
-
-  return (
-    <div className="app-container">
-      <h1>${title}</h1>
-      <div dangerouslySetInnerHTML={{ __html: \`${jsxContent.replace(/`/g, '\\`')}\` }} />
-      {loading && <p>Loading...</p>}
-    </div>
-  );
-}
-`;
-  }
-
-  // Simple static content
-  return `import './App.css';
-
-export default function App() {
-  return (
-    <div className="app-container">
-      <div dangerouslySetInnerHTML={{ __html: \`${jsxContent.replace(/`/g, '\\`')}\` }} />
-    </div>
-  );
-}
-`;
-}
-
-/**
- * Generate React CSS with improvements
- */
-function generateReactCSS(originalCSS: string, _htmlContent: string): string {
-  // Add base styles if not present
-  const hasBaseStyles = /body\s*{/.test(originalCSS);
-
-  const baseStyles = hasBaseStyles ? '' : `* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  min-height: 100vh;
-}
-
-`;
-
-  return `${baseStyles}
-.app-container {
-  width: 100%;
-  min-height: 100vh;
-}
-
-/* Original styles */
-${originalCSS}
-`;
 }
