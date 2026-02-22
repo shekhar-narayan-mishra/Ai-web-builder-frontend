@@ -96,6 +96,8 @@ function App() {
         throw new Error('No stream reader available');
       }
 
+      let currentModel = '';
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -113,6 +115,9 @@ function App() {
             try {
               const data = JSON.parse(jsonStr);
 
+              if (data.model) currentModel = data.model;
+              if (data.warning) toast.info(data.warning);
+
               if (data.error) {
                 throw new Error(data.error);
               }
@@ -120,7 +125,8 @@ function App() {
               if (data.chunk) {
                 fullAIResponse += data.chunk;
                 // Update status with incremental length to show progress
-                setBuildStatus(`Generating code... (${Math.round(fullAIResponse.length / 102.4) / 10}KB)`);
+                const modelLabel = currentModel ? ` [${currentModel}]` : '';
+                setBuildStatus(`Generating code... (${Math.round(fullAIResponse.length / 102.4) / 10}KB)${modelLabel}`);
               }
 
               if (data.done) {
@@ -128,7 +134,7 @@ function App() {
               }
             } catch (e: any) {
               // If it's our thrown error, rethrow to be caught by outer catch
-              if (e.message?.includes('Chat error')) throw e;
+              if (e.message?.includes('Chat error') || e.message?.includes('rate-limited')) throw e;
               console.error('Error parsing SSE line:', e, line);
             }
           }
