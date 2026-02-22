@@ -1,10 +1,10 @@
 import { WebContainer, type FileSystemTree, type WebContainerProcess } from '@webcontainer/api';
 import { useEffect, useRef, useState } from 'react';
 import { FileItem } from '../types';
-import { Loader2, CheckCircle, AlertCircle, Play, Package, Server, FolderOpen } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Play, Server, FolderOpen } from 'lucide-react';
 
 // ── Module-level flag: skip re-mount of server.js on rebuilds ──
-let hasServerFile = false;
+
 
 interface PreviewFrameProps {
   files: FileItem[];

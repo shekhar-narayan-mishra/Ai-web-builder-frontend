@@ -67,23 +67,71 @@ function App() {
         content: p
       }));
 
-      // Get code generation — include template context so AI knows the project structure
+      // Get code generation with streaming
       setBuildStatus('Generating code with AI...');
-      const chatResponse = await axios.post(`${BACKEND_URL}/chat`, {
-        messages: [
-          ...contextMessages,
-          { role: 'user', content: projectPrompt }
-        ]
-      }, {
-        timeout: 120000 // 120 second timeout for larger model
+
+      const response = await fetch(`${BACKEND_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            ...contextMessages,
+            { role: 'user', content: projectPrompt }
+          ]
+        })
       });
 
-      console.log('💬 Full AI Response:', chatResponse.data.response);
-      console.log('💬 Response length:', chatResponse.data.response.length);
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullAIResponse = '';
+
+      if (!reader) {
+        throw new Error('No stream reader available');
+      }
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.chunk) {
+                fullAIResponse += data.chunk;
+                // Update status with incremental length to show progress
+                setBuildStatus(`Generating code... (${Math.round(fullAIResponse.length / 100) / 10}KB)`);
+              }
+
+              if (data.error) {
+                throw new Error(data.error);
+              }
+
+              if (data.done) {
+                console.log('✅ Stream complete');
+              }
+            } catch (e) {
+              console.error('Error parsing SSE line:', e);
+            }
+          }
+        }
+      }
+
+      console.log('💬 Full AI Response length:', fullAIResponse.length);
       setBuildStatus('Parsing response...');
 
       // Parse the response
-      const generatedSteps = parseXml(chatResponse.data.response);
+      const generatedSteps = parseXml(fullAIResponse);
       console.log('📁 Parsed steps:', generatedSteps);
 
       if (generatedSteps.length === 0) {
@@ -97,8 +145,6 @@ function App() {
 
       // Convert steps to files
       const generatedFiles = convertStepsToFiles(generatedSteps);
-      console.log('📄 Generated files:', generatedFiles);
-
       setFiles(generatedFiles);
 
       // Auto-switch to preview if we have files
@@ -106,24 +152,12 @@ function App() {
         setActiveTab('preview');
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error generating project:', error);
       setBuildStatus('');
 
-      if (axios.isAxiosError(error)) {
-        if (error.code === 'ERR_NETWORK' || error.code === 'ERR_CONNECTION_REFUSED') {
-          toast.error('Cannot connect to backend. Is the server running on port 3000?');
-        } else if (error.code === 'ECONNABORTED') {
-          toast.error('Request timeout. The AI is taking too long to respond.');
-        } else if (error.response) {
-          const serverMsg = error.response.data?.message || error.response.statusText;
-          toast.error(`Server error: ${serverMsg}`);
-        } else {
-          toast.error('Network error. Please check your connection.');
-        }
-      } else {
-        toast.error('Unexpected error occurred');
-      }
+      const errMsg = error?.message || 'Unexpected error occurred';
+      toast.error(errMsg);
     } finally {
       setIsLoading(false);
     }
