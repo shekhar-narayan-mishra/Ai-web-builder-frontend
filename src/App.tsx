@@ -15,6 +15,7 @@ import axios from 'axios';
 import { BACKEND_URL } from './config';
 
 function App() {
+  console.log('🚀 BOLT v2.0 - SSE & Speed Optimized');
   const [currentView, setCurrentView] = useState<'home' | 'builder'>('home');
   const [prompt, setPrompt] = useState('');
   const [steps, setSteps] = useState<Step[]>([]);
