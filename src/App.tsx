@@ -5,6 +5,9 @@ import { FileExplorer } from './components/FileExplorer';
 import { CodeEditor } from './components/CodeEditor';
 import { PreviewFrame } from './components/PreviewFrame';
 import { TabView } from './components/TabView';
+import { ToastContainer } from './components/Toast';
+import { useWebContainer } from './hooks/useWebContainer';
+import { useToast } from './hooks/useToast';
 import { parseXml } from './steps';
 import { Step, FileItem } from './types';
 import { ArrowLeft } from 'lucide-react';
@@ -22,7 +25,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [buildStatus, setBuildStatus] = useState('');
 
-
+  const { webcontainer, bootError, retry: retryWebContainer } = useWebContainer();
+  const toast = useToast();
 
   const handleProjectSelect = async (projectPrompt: string) => {
     setPrompt(projectPrompt);
@@ -83,7 +87,7 @@ function App() {
       console.log('📁 Parsed steps:', generatedSteps);
 
       if (generatedSteps.length === 0) {
-        setBuildStatus('No files generated. Try a different prompt.');
+        toast.warning('No files generated. The AI response might not be in the correct format.');
         setBuildStatus('');
         return;
       }
@@ -108,16 +112,17 @@ function App() {
 
       if (axios.isAxiosError(error)) {
         if (error.code === 'ERR_NETWORK' || error.code === 'ERR_CONNECTION_REFUSED') {
-          setBuildStatus('Cannot connect to backend. Server may be down.');
+          toast.error('Cannot connect to backend. Is the server running on port 3000?');
         } else if (error.code === 'ECONNABORTED') {
-          setBuildStatus('Request timeout. Try again.');
+          toast.error('Request timeout. The AI is taking too long to respond.');
         } else if (error.response) {
-          setBuildStatus(`Server error: ${error.response.status}`);
+          const serverMsg = error.response.data?.message || error.response.statusText;
+          toast.error(`Server error: ${serverMsg}`);
         } else {
-          setBuildStatus('Network error. Check connection.');
+          toast.error('Network error. Please check your connection.');
         }
       } else {
-        setBuildStatus('Unexpected error occurred');
+        toast.error('Unexpected error occurred');
       }
     } finally {
       setIsLoading(false);
@@ -229,12 +234,14 @@ function App() {
             {activeTab === 'code' ? (
               <CodeEditor file={selectedFile} />
             ) : (
-              <PreviewFrame files={files} />
+              <PreviewFrame files={files} webContainer={webcontainer} bootError={bootError} onRetry={retryWebContainer} />
             )}
           </div>
         </div>
       </div>
 
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
     </div>
   );
 }
