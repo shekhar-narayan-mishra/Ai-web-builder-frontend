@@ -2,19 +2,19 @@ import { Step } from './types';
 
 export function parseXml(response: string): Step[] {
   const steps: Step[] = [];
-  
+
   console.log('🔍 Parsing response length:', response.length);
-  
+
   // First try to parse XML format (preferred)
   const xmlPattern = /<boltAction\s+type="file"\s+filePath="([^"]+)"[^>]*>([\s\S]*?)<\/boltAction>/gi;
   const xmlMatches = [...response.matchAll(xmlPattern)];
-  
+
   if (xmlMatches.length > 0) {
     console.log(`✅ Found ${xmlMatches.length} files in XML format`);
     xmlMatches.forEach((match, index) => {
       const filePath = match[1];
       const content = match[2].trim();
-      
+
       steps.push({
         id: `step-${index}`,
         title: `Create ${filePath}`,
@@ -23,11 +23,11 @@ export function parseXml(response: string): Step[] {
         code: content
       });
     });
-    
+
     console.log(`📊 Created ${steps.length} unique files from XML`);
     return steps;
   }
-  
+
   // Fallback: Try to extract individual files from markdown-style response
   // Look for patterns like "**index.html:**", "**styles.css:**", etc.
   const fileHeaderPatterns = [
@@ -35,9 +35,9 @@ export function parseXml(response: string): Step[] {
     /###\s*([A-Za-z0-9_\-\.]+\.(html?|css|jsx?|tsx?|json))/gi,   // ### filename.ext
     /^([A-Za-z0-9_\-\.]+\.(html?|css|jsx?|tsx?|json)):?\s*$/gmi, // filename.ext: (on its own line)
   ];
-  
+
   let sections: { name: string; content: string }[] = [];
-  
+
   // Try to split by file headers first
   for (const pattern of fileHeaderPatterns) {
     const matches = [...response.matchAll(pattern)];
@@ -50,7 +50,7 @@ export function parseXml(response: string): Step[] {
         const startPos = match.index! + match[0].length;
         const endPos = i < matches.length - 1 ? matches[i + 1].index! : response.length;
         const content = response.substring(startPos, endPos);
-        
+
         sections.push({
           name: fileName,
           content: extractCodeFromSection(content)
@@ -59,13 +59,13 @@ export function parseXml(response: string): Step[] {
       break;
     }
   }
-  
+
   // If no file sections found, try code blocks
   if (sections.length === 0) {
     const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
     let match;
     let blockIndex = 0;
-    
+
     while ((match = codeBlockRegex.exec(response)) !== null) {
       const [, language, code] = match;
       if (code && code.trim().length > 20) { // Ignore tiny code blocks
@@ -78,13 +78,13 @@ export function parseXml(response: string): Step[] {
       }
     }
   }
-  
+
   // Create steps from sections
   sections.forEach((section, index) => {
     // Determine proper path based on file type
     let filePath: string;
     const fileName = section.name;
-    
+
     if (fileName === 'index.html' || fileName === 'projects.json') {
       // Root level files
       filePath = fileName;
@@ -98,7 +98,7 @@ export function parseXml(response: string): Step[] {
       // Default to src/
       filePath = `src/${fileName}`;
     }
-    
+
     steps.push({
       id: `step-${index}`,
       title: `Create ${fileName}`,
@@ -107,18 +107,12 @@ export function parseXml(response: string): Step[] {
       code: section.content
     });
   });
-  
+
   // Fallback if nothing found
   if (sections.length === 0) {
-    steps.push({
-      id: 'step-0',
-      title: 'Create App.jsx',
-      status: 'completed',
-      path: 'src/App.jsx',
-      code: createDefaultTodoApp()
-    });
+    console.log('⚠️ No files or code blocks found in response');
   }
-  
+
   console.log(`📊 Created ${steps.length} unique files`);
   return steps;
 }
@@ -129,7 +123,7 @@ function extractCodeFromSection(content: string): string {
   if (codeBlockMatch) {
     return codeBlockMatch[1].trim();
   }
-  
+
   // If no code block, clean up the content
   return content
     .replace(/^\s*[\*#`\-\s]+/gm, '') // Remove markdown formatting
@@ -143,7 +137,7 @@ function extractFileName(code: string, _language: string): string | null {
   if (componentMatch) {
     return `${componentMatch[1]}.jsx`;
   }
-  
+
   return null;
 }
 
@@ -158,64 +152,8 @@ function getFileExtension(language: string): string {
     'html': 'html',
     'json': 'json'
   };
-  
+
   return extensions[language?.toLowerCase()] || 'jsx';
 }
 
-function createDefaultTodoApp(): string {
-  return `import { useState } from 'react';
 
-function TodoApp() {
-  const [todos, setTodos] = useState([]);
-  const [input, setInput] = useState('');
-
-  const addTodo = () => {
-    if (input.trim()) {
-      setTodos([...todos, { id: Date.now(), text: input, completed: false }]);
-      setInput('');
-    }
-  };
-
-  const toggleTodo = (id) => {
-    setTodos(todos.map(todo => 
-      todo.id === id ? { ...todo, completed: !todo.completed } : todo
-    ));
-  };
-
-  const deleteTodo = (id) => {
-    setTodos(todos.filter(todo => todo.id !== id));
-  };
-
-  return (
-    <div className="container">
-      <h1 className="title">Todo App</h1>
-      <div className="input-section">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Add new task"
-          className="input"
-          onKeyPress={(e) => e.key === 'Enter' && addTodo()}
-        />
-        <button onClick={addTodo} className="btn">Add Task</button>
-      </div>
-      <ul className="todo-list">
-        {todos.map(todo => (
-          <li key={todo.id} className={\`todo-item \${todo.completed ? 'completed' : ''}\`}>
-            <input
-              type="checkbox"
-              checked={todo.completed}
-              onChange={() => toggleTodo(todo.id)}
-            />
-            <span>{todo.text}</span>
-            <button onClick={() => deleteTodo(todo.id)} className="delete-btn">Remove</button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export default TodoApp;`;
-}

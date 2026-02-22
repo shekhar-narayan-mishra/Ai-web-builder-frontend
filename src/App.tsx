@@ -103,28 +103,39 @@ function App() {
         const lines = text.split('\n');
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
+          if (!line.trim()) continue;
 
-              if (data.chunk) {
-                fullAIResponse += data.chunk;
-                // Update status with incremental length to show progress
-                setBuildStatus(`Generating code... (${Math.round(fullAIResponse.length / 100) / 10}KB)`);
-              }
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const data = JSON.parse(jsonStr);
 
               if (data.error) {
                 throw new Error(data.error);
               }
 
+              if (data.chunk) {
+                fullAIResponse += data.chunk;
+                // Update status with incremental length to show progress
+                setBuildStatus(`Generating code... (${Math.round(fullAIResponse.length / 102.4) / 10}KB)`);
+              }
+
               if (data.done) {
                 console.log('✅ Stream complete');
               }
-            } catch (e) {
-              console.error('Error parsing SSE line:', e);
+            } catch (e: any) {
+              // If it's our thrown error, rethrow to be caught by outer catch
+              if (e.message?.includes('Chat error')) throw e;
+              console.error('Error parsing SSE line:', e, line);
             }
           }
         }
+      }
+
+      if (!fullAIResponse.trim()) {
+        throw new Error('AI returned an empty response. Please try again.');
       }
 
       console.log('💬 Full AI Response length:', fullAIResponse.length);
@@ -135,9 +146,7 @@ function App() {
       console.log('📁 Parsed steps:', generatedSteps);
 
       if (generatedSteps.length === 0) {
-        toast.warning('No files generated. The AI response might not be in the correct format.');
-        setBuildStatus('');
-        return;
+        throw new Error('No files could be parsed from the AI response.');
       }
 
       setSteps(generatedSteps);
