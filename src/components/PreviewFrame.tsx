@@ -138,7 +138,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
       addLog('Starting preview server...', 'info');
 
       // Start the lightweight Node.js HTTP server (no npm deps)
-      const devProcess = await webContainer.spawn('node', ['server.js']);
+      const devProcess = await webContainer.spawn('node', ['server.cjs']);
       devProcessRef.current = devProcess;
       void streamProcessOutput(devProcess, runId, line => addLog(line, 'info'));
 
@@ -605,6 +605,19 @@ const server = http.createServer((req, res) => {
   });
 });
 
+server.on('error', (e) => {
+  console.error('❌ [Server Error]:', e.message || e);
+  if (e.code === 'EADDRINUSE') {
+    console.error('Port 3000 is already in use.');
+  }
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ [Uncaught Exception]:', err.message || err);
+  process.exit(1);
+});
+
 server.listen(3000, () => {
   console.log('Server running on port 3000');
 });
@@ -614,7 +627,7 @@ server.listen(3000, () => {
     'index.html': {
       file: { contents: indexHtml }
     },
-    'server.js': {
+    'server.cjs': {
       file: { contents: serverJs }
     }
   };
@@ -679,7 +692,7 @@ server.listen(3000, () => {
 `;
 
   const tree: FileSystemTree = {
-    'server.js': {
+    'server.cjs': {
       file: { contents: serverJs }
     }
   };
@@ -703,19 +716,19 @@ server.listen(3000, () => {
  */
 function cleanComponentForCDN(code: string): string {
   return code
-    // Remove imports: `import ... from '...'`
-    .replace(/import\s+[\s\S]*?from\s+['"][^'"]+['"]\s*;?/g, '')
-    // Remove imports: `import '...'`
-    .replace(/import\s+['"][^'"]+['"]\s*;?/g, '')
+    // Remove import lines
+    .replace(/^import\s+.*$/gm, '')
     // Convert `export default function X` → `function X`
     .replace(/export\s+default\s+function\s+/g, 'function ')
     // Convert `export default` (for arrow/const) → remove export default
     .replace(/export\s+default\s+/g, '')
     // Remove named exports
-    .replace(/export\s+(const|let|var|function|class)\s+/g, '$1 ')
-    .replace(/export\s+\{[^}]*\};?\s*/g, '')
+    .replace(/export\s+(?:const|let|var|function|class)\s+/g, (match) => {
+      return match.replace('export ', '');
+    })
+    .replace(/^export\s+\{[^}]*\};?\s*$/gm, '')
     // Strip basic TypeScript type annotations
-    .replace(/:\s*React\.FC(?:<[^>]+>)?\b/g, '')
+    .replace(/:\s*React\.FC\b/g, '')
     .replace(/:\s*React\.ReactNode\b/g, '')
     .replace(/<[A-Za-z]+\[\]>/g, '') // Array<Type>
     .replace(/:\s*string\b/g, '')
