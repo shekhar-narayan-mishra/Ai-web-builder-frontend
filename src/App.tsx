@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { HomePage } from './components/HomePage';
 import { StepsList } from './components/StepsList';
 import { FileExplorer } from './components/FileExplorer';
@@ -28,6 +28,11 @@ function App() {
 
   const { webcontainer, bootError, retry: retryWebContainer } = useWebContainer();
   const toast = useToast();
+
+  useEffect(() => {
+    // Wake up the backend immediately on load (for Render free tier cold starts)
+    axios.get(`${BACKEND_URL}/`).catch(() => { });
+  }, []);
 
   const handleProjectSelect = async (projectPrompt: string) => {
     setPrompt(projectPrompt);

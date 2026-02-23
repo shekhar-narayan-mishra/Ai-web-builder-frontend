@@ -545,6 +545,9 @@ ${allCSS}
   <script type="text/babel" data-type="module">
     console.log('⚡ [Preview] Babel starting transpilation...');
     try {
+      // Inject React Hooks into global scope for stripped components
+      const { useState, useEffect, useRef, useMemo, useCallback, useContext, useReducer, Fragment } = React;
+
 ${allComponentCode}
 
       // Render
