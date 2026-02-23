@@ -731,7 +731,7 @@ function cleanComponentForCDN(code: string): string {
     .replace(/export\s+(?:const|let|var|function|class)\s+/g, (match) => {
       return match.replace('export ', '');
     })
-    .replace(/^export\s+\{[^}]*\};?\s*$/gm, '')
+    .replace(/export\s+\{[\s\S]*?\};?\s*$/gm, '')
     // Strip basic TypeScript type annotations
     .replace(/:\s*React\.FC\b/g, '')
     .replace(/:\s*React\.ReactNode\b/g, '')
