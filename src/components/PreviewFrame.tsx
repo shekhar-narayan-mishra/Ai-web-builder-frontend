@@ -719,8 +719,10 @@ server.listen(3000, () => {
  */
 function cleanComponentForCDN(code: string): string {
   return code
-    // Remove import lines
-    .replace(/^import\s+.*$/gm, '')
+    // Remove multiline imports
+    .replace(/^[\s]*import\s+\{[\s\S]*?\}\s+from\s+['"][^'"]+['"];?/gm, '')
+    // Remove single line imports
+    .replace(/^[\s]*import\s+.*$/gm, '')
     // Convert `export default function X` → `function X`
     .replace(/export\s+default\s+function\s+/g, 'function ')
     // Convert `export default` (for arrow/const) → remove export default
