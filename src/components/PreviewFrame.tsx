@@ -131,14 +131,33 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
 
       setProgress(60);
 
-      // Skip straight to starting server — no install step!
+      // Install serve package
+      setBuildPhase('installing');
+      setStatus('Installing dependencies...');
+      setProgress(70);
+      addLog('Running npm install...', 'info');
+
+      const installProcess = await webContainer.spawn('npm', ['install', '--prefer-offline', '--no-audit', '--no-fund']);
+      void streamProcessOutput(installProcess, runId, line => addLog(line, 'info'));
+      const installExit = await installProcess.exit;
+      if (runIdRef.current !== runId) return;
+
+      if (installExit !== 0) {
+        addLog(`npm install failed with code ${installExit}`, 'error');
+        setStatus('Install failed');
+        setIsLoading(false);
+        setBuildPhase('error');
+        return;
+      }
+      addLog('Dependencies installed', 'success');
+      setProgress(85);
+
+      // Start serve
       setBuildPhase('starting');
       setStatus('Starting preview server...');
-      setProgress(80);
       addLog('Starting preview server...', 'info');
 
-      // Start the lightweight Node.js HTTP server (no npm deps)
-      const devProcess = await webContainer.spawn('node', ['server.cjs']);
+      const devProcess = await webContainer.spawn('npx', ['serve', '.', '-l', '3000', '--no-clipboard']);
       devProcessRef.current = devProcess;
       void streamProcessOutput(devProcess, runId, line => addLog(line, 'info'));
 
@@ -576,136 +595,27 @@ ${allComponentCode}
 </body>
 </html>`;
 
-  // Tiny Node.js HTTP server — zero npm dependencies!
-  const serverJs = `
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
 
-const MIME = {
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
-
-const server = http.createServer((req, res) => {
-  let filePath = '.' + (req.url === '/' ? '/index.html' : req.url);
-  const ext = path.extname(filePath);
-  const contentType = MIME[ext] || 'application/octet-stream';
-
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      // Fallback to index.html for SPA routing
-      fs.readFile('./index.html', (err2, fallback) => {
-        if (err2) {
-          res.writeHead(404);
-          res.end('Not found');
-        } else {
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(fallback);
-        }
-      });
-    } else {
-      res.writeHead(200, { 'Content-Type': contentType });
-      res.end(content);
-    }
-  });
-});
-
-server.on('error', (e) => {
-  console.error('❌ [Server Error]:', e.message || e);
-  if (e.code === 'EADDRINUSE') {
-    console.error('Port 3000 is already in use.');
-  }
-  process.exit(1);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('❌ [Uncaught Exception]:', err.message || err);
-  process.exit(1);
-});
-
-server.listen(3000, () => {
-  console.log('Server running on port 3000');
-});
-`;
 
   const tree: FileSystemTree = {
     'index.html': {
       file: { contents: indexHtml }
     },
-    'server.cjs': {
-      file: { contents: serverJs }
+    'package.json': {
+      file: { contents: JSON.stringify({ name: "preview", private: true, scripts: { start: "serve ." }, dependencies: { serve: "^14.2.0" } }) }
     }
   };
-
-  // Also mount any static assets (images, fonts, etc.)
-  for (const [filePath, file] of fileMap) {
-    if (filePath.endsWith('.css') || /\.(tsx|jsx|ts|js)$/.test(filePath)) continue;
-    if (filePath === 'index.html' || filePath === 'package.json') continue;
-    if (filePath.includes('node_modules')) continue;
-    insertFileIntoTree(tree, filePath.split('/'), file.content);
-  }
 
   return tree;
 }
 
 /**
- * For vanilla HTML/CSS/JS projects — serve as-is with the tiny HTTP server
+ * For vanilla HTML/CSS/JS projects — serve as-is with serve
  */
 function createVanillaFileTree(fileMap: Map<string, FlatFile>): FileSystemTree {
-  const serverJs = `
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-
-const MIME = {
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
-
-const server = http.createServer((req, res) => {
-  let filePath = '.' + (req.url === '/' ? '/index.html' : req.url);
-  const ext = path.extname(filePath);
-  const contentType = MIME[ext] || 'application/octet-stream';
-
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      fs.readFile('./index.html', (err2, fallback) => {
-        if (err2) {
-          res.writeHead(404);
-          res.end('Not found');
-        } else {
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(fallback);
-        }
-      });
-    } else {
-      res.writeHead(200, { 'Content-Type': contentType });
-      res.end(content);
-    }
-  });
-});
-
-server.listen(3000, () => {
-  console.log('Server running on port 3000');
-});
-`;
-
   const tree: FileSystemTree = {
-    'server.cjs': {
-      file: { contents: serverJs }
+    'package.json': {
+      file: { contents: JSON.stringify({ name: "preview", private: true, scripts: { start: "serve ." }, dependencies: { serve: "^14.2.0" } }) }
     }
   };
 
