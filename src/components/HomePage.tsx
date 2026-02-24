@@ -208,7 +208,7 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
       <div className="border-t border-gray-900 py-8 bg-[#0a0a0a]">
         <div className="container mx-auto px-6 text-center">
           <p className="text-gray-600 text-sm">
-            made with ❤️ by bucky with his left arm • Powered by React & WebContainer
+            Made by Bucky • Powered by React & WebContainer
           </p>
         </div>
       </div>
