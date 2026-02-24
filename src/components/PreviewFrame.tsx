@@ -542,26 +542,35 @@ ${allCSS}
       console.error('❌ [Preview Runtime Error]:', msg, 'at', line + ':' + col);
     };
   </script>
-  <script type="text/babel" data-type="module">
-    console.log('⚡ [Preview] Babel starting transpilation...');
-    try {
-      // Inject React Hooks into global scope for stripped components
-      const { useState, useEffect, useRef, useMemo, useCallback, useContext, useReducer, Fragment } = React;
-
+  <script>
+    // Expose React hooks to global scope BEFORE Babel scripts run
+    window.useState = React.useState;
+    window.useEffect = React.useEffect;
+    window.useRef = React.useRef;
+    window.useMemo = React.useMemo;
+    window.useCallback = React.useCallback;
+    window.useContext = React.useContext;
+    window.useReducer = React.useReducer;
+    window.Fragment = React.Fragment;
+    window.createElement = React.createElement;
+  </script>
+  <script type="text/babel">
 ${allComponentCode}
-
-      // Render
-      const rootEl = document.getElementById('root');
-      if (rootEl) {
-        const root = ReactDOM.createRoot(rootEl);
+  </script>
+  <script type="text/babel">
+    try {
+      var rootEl = document.getElementById('root');
+      if (rootEl && typeof App !== 'undefined') {
+        var root = ReactDOM.createRoot(rootEl);
         root.render(React.createElement(App));
         console.log('✅ [Preview] App rendered successfully');
       } else {
-        console.error('❌ [Preview] Root element #root not found');
+        console.error('❌ [Preview] App component not found');
+        document.body.innerHTML = '<div style="padding:20px;color:#f87171;font-family:sans-serif"><h3>Preview Error</h3><p>App component was not defined by the AI. Try regenerating.</p></div>';
       }
     } catch (err) {
-      console.error('❌ [Preview Babel/Render Error]:', err);
-      document.body.innerHTML = '<div style="padding: 20px; color: red; font-family: sans-serif;"><h3>Render Error</h3><pre>' + err.message + '</pre></div>';
+      console.error('❌ [Preview Render Error]:', err);
+      document.body.innerHTML = '<div style="padding:20px;color:#f87171;font-family:sans-serif"><h3>Render Error</h3><pre>' + err.message + '</pre></div>';
     }
   </script>
 </body>
