@@ -225,14 +225,18 @@ function App() {
         <div className="flex items-center gap-4 mb-4">
           <button
             onClick={() => setCurrentView('home')}
-            className="p-2 hover:bg-gray-900 rounded-lg transition-colors flex items-center gap-2 text-gray-500 hover:text-gray-300"
+            className="p-2 hover:bg-gray-900 rounded-lg transition-colors flex items-center gap-2 text-gray-500 hover:text-gray-300 mr-2"
           >
             <ArrowLeft className="w-5 h-5" />
-            Back to Home
           </button>
-          <h1 className="text-2xl font-semibold text-gray-400">
-            AI Website Builder
-          </h1>
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg overflow-hidden">
+              <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
+            </div>
+            <h1 className="text-xl font-semibold text-gray-400">
+              AI Website Builder
+            </h1>
+          </div>
         </div>
 
         {/* Inline Build Status */}

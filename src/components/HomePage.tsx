@@ -1,4 +1,4 @@
-import { Sparkles, Zap, Code, Palette, Globe, Smartphone, ShoppingCart, MessageSquare, Calendar, FileText } from 'lucide-react';
+import { Zap, Code, Palette, Globe, Smartphone, ShoppingCart, MessageSquare, Calendar, FileText } from 'lucide-react';
 
 interface HomePageProps {
   onProjectSelect: (prompt: string) => void;
@@ -21,7 +21,7 @@ const projectSuggestions = [
     gradient: "from-purple-500 to-pink-500"
   },
   {
-    title: "Portfolio Website", 
+    title: "Portfolio Website",
     description: "Personal portfolio with projects showcase",
     icon: <Globe className="w-6 h-6" />,
     prompt: "Create a personal portfolio website with hero section, projects, and contact form",
@@ -57,7 +57,7 @@ const projectSuggestions = [
   },
   {
     title: "Mobile App UI",
-    description: "Mobile-first responsive design", 
+    description: "Mobile-first responsive design",
     icon: <Smartphone className="w-6 h-6" />,
     prompt: "Create a mobile app interface with navigation and responsive design",
     gradient: "from-pink-500 to-rose-500"
@@ -74,13 +74,13 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl"></div>
           <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl"></div>
         </div>
-        
+
         <div className="relative container mx-auto px-6 pt-24 pb-20">
           <div className="text-center max-w-5xl mx-auto">
             {/* Logo/Brand */}
             <div className="flex items-center justify-center gap-3 mb-10">
-              <div className="p-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-2xl shadow-lg shadow-purple-500/20">
-                <Sparkles className="w-8 h-8 text-white" />
+              <div className="w-12 h-12 rounded-2xl overflow-hidden shadow-lg shadow-purple-500/20">
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
               </div>
               <h1 className="text-2xl font-semibold text-gray-400">
                 AI Website Builder
@@ -99,7 +99,7 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
             </h2>
 
             <p className="text-xl text-gray-400 mb-10 max-w-3xl mx-auto leading-relaxed">
-              Transform your ideas into fully functional websites with our AI-powered platform. 
+              Transform your ideas into fully functional websites with our AI-powered platform.
               Just describe what you want, and watch it come to life instantly.
             </p>
 
@@ -112,8 +112,8 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
                 <Zap className="w-5 h-5" />
                 Start Building Now
               </button>
-              
-              <button 
+
+              <button
                 onClick={() => onProjectSelect("Create a modern portfolio website with hero section and projects showcase")}
                 className="text-gray-300 hover:text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all border border-gray-800 hover:border-gray-700 hover:bg-gray-900"
               >
@@ -145,15 +145,15 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
               <div className={`inline-flex p-3 rounded-xl bg-gradient-to-r ${project.gradient} mb-4 shadow-lg`}>
                 {project.icon}
               </div>
-              
+
               <h4 className="text-lg font-semibold text-white mb-2">
                 {project.title}
               </h4>
-              
+
               <p className="text-gray-500 text-sm leading-relaxed mb-4">
                 {project.description}
               </p>
-              
+
               <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                 <div className="text-purple-400 text-sm font-medium flex items-center gap-1">
                   Try it now <span>→</span>
@@ -208,7 +208,7 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
       <div className="border-t border-gray-900 py-8 bg-[#0a0a0a]">
         <div className="container mx-auto px-6 text-center">
           <p className="text-gray-600 text-sm">
-            Built with ❤️ using AI • Powered by React & WebContainer
+            made with ❤️ by shekhar • Powered by React & WebContainer
           </p>
         </div>
       </div>
