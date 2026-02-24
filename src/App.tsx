@@ -225,18 +225,27 @@ function App() {
         <div className="flex items-center gap-4 mb-4">
           <button
             onClick={() => setCurrentView('home')}
-            className="p-2 hover:bg-gray-900 rounded-lg transition-colors flex items-center gap-2 text-gray-500 hover:text-gray-300 mr-2"
+            className="p-2 hover:bg-gray-900 rounded-lg transition-colors flex items-center gap-2 text-gray-500 hover:text-gray-300"
           >
             <ArrowLeft className="w-5 h-5" />
+            Back to Home
           </button>
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg overflow-hidden">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
+            <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-500/30 shadow-lg shadow-purple-500/20">
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=AI&background=6366f1&color=fff';
+                }}
+              />
             </div>
-            <h1 className="text-xl font-semibold text-gray-400">
+            <h1 className="text-xl font-semibold text-white">
               AI Website Builder
             </h1>
           </div>
+
         </div>
 
         {/* Inline Build Status */}
