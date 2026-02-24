@@ -31,7 +31,7 @@ function App() {
 
   useEffect(() => {
     // Wake up the backend immediately on load (for Render free tier cold starts)
-    axios.get(`${BACKEND_URL}/`).catch(() => { });
+    axios.get(`${BACKEND_URL}/health`).catch(() => { });
   }, []);
 
   const handleProjectSelect = async (projectPrompt: string) => {
@@ -230,22 +230,9 @@ function App() {
             <ArrowLeft className="w-5 h-5" />
             Back to Home
           </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-500/30 shadow-lg shadow-purple-500/20">
-              <img
-                src="/logo.jpg"
-                alt="Logo"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=AI&background=6366f1&color=fff';
-                }}
-              />
-            </div>
-            <h1 className="text-xl font-semibold text-white">
-              AI Website Builder
-            </h1>
-          </div>
-
+          <h1 className="text-2xl font-semibold text-gray-400">
+            AI Website Builder
+          </h1>
         </div>
 
         {/* Inline Build Status */}
