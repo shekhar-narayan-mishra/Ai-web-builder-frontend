@@ -10,7 +10,7 @@ import { useWebContainer } from './hooks/useWebContainer';
 import { useToast } from './hooks/useToast';
 import { parseXml } from './steps';
 import { Step, FileItem } from './types';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send } from 'lucide-react';
 import axios from 'axios';
 import { BACKEND_URL } from './config';
 
@@ -30,7 +30,6 @@ function App() {
   const toast = useToast();
 
   useEffect(() => {
-    // Wake up the backend immediately on load (for Render free tier cold starts)
     axios.get(`${BACKEND_URL}/health`).catch(() => { });
   }, []);
 
@@ -48,11 +47,8 @@ function App() {
 
     try {
       console.log('🚀 Starting project generation for:', projectPrompt);
-
-      // Get template type first
       setBuildStatus('Loading template...');
 
-      // Show cold-start warning after 10s
       const coldStartTimer = setTimeout(() => {
         setBuildStatus('Backend is waking up, please wait...');
       }, 10000);
@@ -60,27 +56,23 @@ function App() {
       const templateResponse = await axios.post(`${BACKEND_URL}/template`, {
         prompt: projectPrompt
       }, {
-        timeout: 60000  // 60s timeout for cold starts
+        timeout: 60000
       });
       clearTimeout(coldStartTimer);
 
       console.log('📋 Template response:', templateResponse.data);
 
-      // Build context messages from template prompts
       const templatePrompts: string[] = templateResponse.data.prompts || [];
       const contextMessages = templatePrompts.map((p: string) => ({
         role: 'user' as const,
         content: p
       }));
 
-      // Get code generation with streaming
       setBuildStatus('Generating code with AI...');
 
       const response = await fetch(`${BACKEND_URL}/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [
             ...contextMessages,
@@ -129,7 +121,6 @@ function App() {
 
               if (data.chunk) {
                 fullAIResponse += data.chunk;
-                // Update status with incremental length to show progress
                 const modelLabel = currentModel ? ` [${currentModel}]` : '';
                 setBuildStatus(`Generating code... (${Math.round(fullAIResponse.length / 102.4) / 10}KB)${modelLabel}`);
               }
@@ -138,7 +129,6 @@ function App() {
                 console.log('✅ Stream complete');
               }
             } catch (e: any) {
-              // If it's our thrown error, rethrow to be caught by outer catch
               if (e.message?.includes('Chat error') || e.message?.includes('rate-limited')) throw e;
               console.error('Error parsing SSE line:', e, line);
             }
@@ -153,7 +143,6 @@ function App() {
       console.log('💬 Full AI Response length:', fullAIResponse.length);
       setBuildStatus('Parsing response...');
 
-      // Parse the response
       const generatedSteps = parseXml(fullAIResponse);
       console.log('📁 Parsed steps:', generatedSteps);
 
@@ -164,11 +153,9 @@ function App() {
       setSteps(generatedSteps);
       setBuildStatus(`Generated ${generatedSteps.length} files — building preview...`);
 
-      // Convert steps to files
       const generatedFiles = convertStepsToFiles(generatedSteps);
       setFiles(generatedFiles);
 
-      // Auto-switch to preview if we have files
       if (generatedFiles.length > 0) {
         setActiveTab('preview');
       }
@@ -219,53 +206,60 @@ function App() {
   }
 
   return (
-    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-gray-50 text-gray-900 flex flex-col">
       {/* Header */}
-      <div className="p-6 border-b border-gray-900 bg-[#0d0d0d]">
-        <div className="flex items-center gap-4 mb-4">
+      <div className="px-5 py-4 border-b border-gray-200 bg-white">
+        <div className="flex items-center gap-4 mb-3">
           <button
             onClick={() => setCurrentView('home')}
-            className="p-2 hover:bg-gray-900 rounded-lg transition-colors flex items-center gap-2 text-gray-500 hover:text-gray-300"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2 text-gray-500 hover:text-gray-700"
           >
-            <ArrowLeft className="w-5 h-5" />
-            Back to Home
+            <ArrowLeft className="w-4 h-4" />
+            <span className="text-sm">Back</span>
           </button>
-          <h1 className="text-2xl font-semibold text-gray-400">
-            AI Website Builder
-          </h1>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center">
+              <Sparkles className="w-3.5 h-3.5 text-white" />
+            </div>
+            <h1 className="text-[15px] font-semibold text-gray-900 tracking-tight">
+              AI Website Builder
+            </h1>
+          </div>
         </div>
 
-        {/* Inline Build Status */}
+        {/* Build Status */}
         {buildStatus && (
-          <div className="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-purple-500/5 border border-purple-500/10">
-            <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></div>
-            <span className="text-xs text-purple-300/80 font-medium">{buildStatus}</span>
+          <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
+            <span className="text-xs text-blue-700 font-medium">{buildStatus}</span>
           </div>
         )}
 
-        <div className="flex gap-4">
+        {/* Prompt Input */}
+        <div className="flex gap-3">
           <input
             type="text"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Describe your project (e.g., Create a todo app)..."
-            className="flex-1 p-3 bg-[#111111] border border-gray-900 rounded-lg text-white placeholder-gray-600 focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:outline-none transition-all"
+            className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
             onKeyPress={(e) => e.key === 'Enter' && handleManualSubmit()}
           />
           <button
             onClick={handleManualSubmit}
             disabled={isLoading}
-            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-800 disabled:to-gray-800 disabled:text-gray-600 rounded-lg font-medium transition-all shadow-lg shadow-purple-500/20"
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-lg font-medium text-sm transition-all flex items-center gap-2 shadow-sm"
           >
-            {isLoading ? 'Building...' : 'Build Website'}
+            <Send className="w-4 h-4" />
+            {isLoading ? 'Building...' : 'Build'}
           </button>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex">
+      <div className="flex-1 flex min-h-0">
         {/* Left Sidebar - Steps */}
-        <div className="w-80 border-r border-gray-900 overflow-y-auto bg-[#0d0d0d]">
+        <div className="w-72 border-r border-gray-200 overflow-y-auto bg-white">
           <StepsList
             steps={steps}
             currentStep={currentStep}
@@ -274,7 +268,7 @@ function App() {
         </div>
 
         {/* Middle - File Explorer */}
-        <div className="w-80 border-r border-gray-900 overflow-y-auto bg-[#0a0a0a]">
+        <div className="w-64 border-r border-gray-200 overflow-y-auto bg-white">
           <FileExplorer
             files={files}
             onFileSelect={setSelectedFile}
@@ -282,10 +276,10 @@ function App() {
         </div>
 
         {/* Right - Code/Preview */}
-        <div className="flex-1 flex flex-col bg-[#0a0a0a]">
+        <div className="flex-1 flex flex-col bg-white">
           <TabView activeTab={activeTab} onTabChange={setActiveTab} />
 
-          <div className="flex-1">
+          <div className="flex-1 min-h-0">
             {activeTab === 'code' ? (
               <CodeEditor file={selectedFile} />
             ) : (

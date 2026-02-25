@@ -5,134 +5,86 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  box-sizing: border-box;
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
 }
 
-body {
-  margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background: #0a0a0a;
-  color: #e5e5e5;
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
-/* Custom scrollbar - Modern dark theme */
-.custom-scrollbar::-webkit-scrollbar {
+/* Scrollbar — minimal light style */
+::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.3);
-  border-radius: 3px;
-  transition: background 0.2s;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.5);
-}
-
-/* Default scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #0a0a0a;
-}
-
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
-  border-radius: 4px;
-  transition: background 0.2s;
+  background: hsl(214 31.8% 85%);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: hsl(214 31.8% 75%);
 }
 
-/* Remove default transition on all elements for better performance */
-* {
-  transition: none;
+/* Transitions */
+button,
+a,
+input,
+textarea,
+select {
+  transition: all 0.15s ease;
 }
 
-/* Add transitions only where needed */
-button, a, input, textarea, select {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Gradient animations */
-@keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-.animate-gradient {
-  background-size: 200% 200%;
-  animation: gradient-shift 3s ease infinite;
-}
-
-/* Pulse animation for indicators */
-@keyframes pulse-glow {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 8px rgba(139, 92, 246, 0.6);
-  }
-  50% {
-    opacity: 0.7;
-    box-shadow: 0 0 16px rgba(139, 92, 246, 0.8);
-  }
-}
-
-.animate-pulse-glow {
-  animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* Monospace font for code */
+/* Monospace font */
 .font-mono {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
 }
 
-/* Glass morphism effect */
-.glass {
-  background: rgba(17, 17, 17, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-/* Shimmer loading effect */
-@keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
-}
-
-.animate-shimmer {
-  animation: shimmer 2s infinite;
-  background: linear-gradient(to right, transparent 0%, rgba(139, 92, 246, 0.1) 50%, transparent 100%);
-  background-size: 1000px 100%;
-}
-
-/* Slide in animation for toasts */
+/* Toast animations */
 @keyframes slideIn {
   from {
     transform: translateX(100%) scale(0.95);
     opacity: 0;
   }
+
   to {
     transform: translateX(0) scale(1);
     opacity: 1;
@@ -144,6 +96,7 @@ button, a, input, textarea, select {
     transform: translateX(0) scale(1);
     opacity: 1;
   }
+
   to {
     transform: translateX(100%) scale(0.95);
     opacity: 0;
@@ -151,38 +104,26 @@ button, a, input, textarea, select {
 }
 
 .toast-enter {
-  animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: slideIn 0.3s ease forwards;
 }
 
 .toast-exit {
-  animation: slideOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: slideOut 0.3s ease forwards;
 }
 
-/* Build step pulse dot */
-@keyframes buildDotPulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
+/* Build progress shimmer */
+@keyframes progressShimmer {
+  0% {
+    background-position: 200% 0;
   }
-  50% {
-    opacity: 0.4;
-    transform: scale(1.5);
+
+  100% {
+    background-position: -200% 0;
   }
 }
 
-.build-dot-pulse {
-  animation: buildDotPulse 1.5s ease-in-out infinite;
-}
-
-/* Build progress bar animated gradient */
 .build-progress-bar {
-  background: linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa, #8b5cf6, #6366f1);
+  background: linear-gradient(90deg, hsl(221 83% 53%), hsl(221 83% 63%), hsl(221 83% 73%), hsl(221 83% 63%), hsl(221 83% 53%));
   background-size: 200% 100%;
   animation: progressShimmer 2s ease-in-out infinite;
 }
-
-@keyframes progressShimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-

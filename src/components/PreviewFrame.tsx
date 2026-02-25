@@ -262,10 +262,10 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
   }
 
   const getStatusIcon = () => {
-    if (isLoading) return <Loader2 className="w-5 h-5 animate-spin" />;
-    if (url) return <CheckCircle className="w-5 h-5 text-green-400" />;
-    if (status.includes('Error') || status.includes('failed')) return <AlertCircle className="w-5 h-5 text-red-400" />;
-    return <Play className="w-5 h-5 text-blue-400" />;
+    if (isLoading) return <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />;
+    if (url) return <CheckCircle className="w-5 h-5 text-emerald-500" />;
+    if (status.includes('Error') || status.includes('failed')) return <AlertCircle className="w-5 h-5 text-red-500" />;
+    return <Play className="w-5 h-5 text-gray-400" />;
   };
 
   if (!webContainer) {
@@ -274,13 +274,13 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
         <div className="text-center px-8 max-w-md">
           {bootError ? (
             <>
-              <AlertCircle className="w-10 h-10 text-red-400/70 mx-auto mb-3" />
-              <p className="text-red-400/80 text-sm mb-2 font-medium">WebContainer Failed to Start</p>
+              <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+              <p className="text-red-600 text-sm mb-2 font-medium">WebContainer Failed to Start</p>
               <p className="text-gray-500 text-xs mb-4 leading-relaxed">{bootError}</p>
               {onRetry && (
                 <button
                   onClick={onRetry}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded-lg transition-colors"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
                 >
                   Retry
                 </button>
@@ -288,9 +288,9 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
             </>
           ) : (
             <>
-              <Loader2 className="w-8 h-8 text-purple-400 animate-spin mx-auto mb-3" />
-              <p className="text-gray-400 text-sm">Initializing WebContainer...</p>
-              <p className="text-gray-600 text-xs mt-1">This may take a few seconds</p>
+              <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-3" />
+              <p className="text-gray-600 text-sm">Initializing WebContainer...</p>
+              <p className="text-gray-400 text-xs mt-1">This may take a few seconds</p>
             </>
           )}
         </div>
@@ -301,7 +301,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
   if (files.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-gray-400">Generate a project to see preview</div>
+        <div className="text-gray-400 text-sm">Generate a project to see preview</div>
       </div>
     );
   }
@@ -327,16 +327,16 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
   return (
     <div className="h-full flex flex-col">
       {/* Status Bar */}
-      <div className="p-3 bg-[#111113] border-b border-gray-800/60">
+      <div className="p-3 bg-gray-50 border-b border-gray-200">
         <div className="flex items-center gap-3">
           {getStatusIcon()}
-          <span className="text-sm text-gray-400 font-medium">
+          <span className="text-sm text-gray-600 font-medium">
             {status || 'Waiting for files...'}
           </span>
           {url && (
             <div className="ml-auto">
-              <div className="flex items-center gap-2 text-xs text-emerald-400">
-                <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
+              <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
+                <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
                 Live Preview
               </div>
             </div>
@@ -344,13 +344,10 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
         </div>
 
         {isLoading && (
-          <div className="mt-2 w-full bg-gray-800 rounded-full h-1 overflow-hidden">
+          <div className="mt-2 w-full bg-gray-200 rounded-full h-1 overflow-hidden">
             <div
-              className="h-1 rounded-full transition-all duration-700 ease-out"
-              style={{
-                width: `${progress}%`,
-                background: 'linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa)'
-              }}
+              className="h-1 rounded-full transition-all duration-700 ease-out build-progress-bar"
+              style={{ width: `${progress}%` }}
             ></div>
           </div>
         )}
@@ -365,7 +362,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
             title="Preview"
           />
         ) : isLoading ? (
-          <div className="flex items-center justify-center h-full bg-[#0c0c0e]">
+          <div className="flex items-center justify-center h-full bg-gray-50">
             <div className="w-full max-w-md px-8">
               {/* Build Steps */}
               <div className="space-y-3 mb-8">
@@ -378,21 +375,21 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
                     <div
                       key={step.phase}
                       className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-500 ${isActive
-                        ? 'bg-purple-500/8 border-purple-500/20 shadow-sm shadow-purple-500/5'
+                        ? 'bg-blue-50 border-blue-200 shadow-sm'
                         : isComplete
-                          ? 'bg-emerald-500/5 border-emerald-500/15'
-                          : 'bg-gray-900/30 border-gray-800/30'
+                          ? 'bg-emerald-50 border-emerald-200'
+                          : 'bg-white border-gray-100'
                         }`}
                     >
                       {/* Icon */}
-                      <div className={`flex-shrink-0 ${isActive ? 'text-purple-400' : isComplete ? 'text-emerald-400' : 'text-gray-700'
+                      <div className={`flex-shrink-0 ${isActive ? 'text-blue-500' : isComplete ? 'text-emerald-500' : 'text-gray-300'
                         }`}>
                         {isComplete ? (
                           <CheckCircle className="w-5 h-5" />
                         ) : isActive ? (
                           <div className="relative">
                             <Icon className="w-5 h-5" />
-                            <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-purple-400 rounded-full build-dot-pulse"></div>
+                            <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
                           </div>
                         ) : (
                           <Icon className="w-5 h-5" />
@@ -400,7 +397,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
                       </div>
 
                       {/* Label */}
-                      <span className={`text-sm font-medium transition-colors duration-300 ${isActive ? 'text-purple-300' : isComplete ? 'text-emerald-300/80' : 'text-gray-600'
+                      <span className={`text-sm font-medium transition-colors duration-300 ${isActive ? 'text-blue-700' : isComplete ? 'text-emerald-700' : 'text-gray-400'
                         }`}>
                         {step.label}
                       </span>
@@ -408,10 +405,10 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
                       {/* Status indicator */}
                       <div className="ml-auto">
                         {isActive && (
-                          <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+                          <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
                         )}
                         {isComplete && (
-                          <span className="text-[10px] text-emerald-500/60 font-mono">done</span>
+                          <span className="text-[10px] text-emerald-500 font-mono font-medium">done</span>
                         )}
                       </div>
                     </div>
@@ -421,7 +418,7 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
 
               {/* Progress */}
               <div className="text-center">
-                <div className="w-full bg-gray-800/50 rounded-full h-1.5 mb-3 overflow-hidden">
+                <div className="w-full bg-gray-200 rounded-full h-1.5 mb-3 overflow-hidden">
                   <div
                     className="h-1.5 rounded-full transition-all duration-700 ease-out build-progress-bar"
                     style={{ width: `${progress}%` }}
@@ -434,20 +431,20 @@ export function PreviewFrame({ files, webContainer, bootError, onRetry }: Previe
             </div>
           </div>
         ) : logs.some(log => log.type === 'error') ? (
-          <div className="flex items-center justify-center h-full bg-[#0c0c0e]">
+          <div className="flex items-center justify-center h-full bg-gray-50">
             <div className="text-center px-8">
-              <AlertCircle className="w-10 h-10 text-red-400/70 mx-auto mb-3" />
-              <p className="text-red-400/80 text-sm">{status}</p>
-              <div className="mt-4 max-w-lg mx-auto bg-red-500/5 border border-red-500/10 rounded-lg p-3">
+              <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+              <p className="text-red-600 text-sm font-medium">{status}</p>
+              <div className="mt-4 max-w-lg mx-auto bg-red-50 border border-red-200 rounded-lg p-3">
                 {logs.filter(l => l.type === 'error').slice(-3).map(log => (
-                  <p key={log.id} className="text-xs text-red-300/60 font-mono">{log.text}</p>
+                  <p key={log.id} className="text-xs text-red-500 font-mono">{log.text}</p>
                 ))}
               </div>
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-gray-600 text-sm">{status || 'Generate a project to see preview'}</div>
+          <div className="flex items-center justify-center h-full bg-gray-50">
+            <div className="text-gray-400 text-sm">{status || 'Generate a project to see preview'}</div>
           </div>
         )}
       </div>
