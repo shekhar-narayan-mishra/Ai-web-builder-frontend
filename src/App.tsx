@@ -50,8 +50,8 @@ function App() {
       setBuildStatus('Loading template...');
 
       const coldStartTimer = setTimeout(() => {
-        setBuildStatus('Backend is waking up, please wait...');
-      }, 10000);
+        setBuildStatus('Backend is waking up from sleep mode (this can take up to 50 seconds)...');
+      }, 3000);
 
       const templateResponse = await axios.post(`${BACKEND_URL}/template`, {
         prompt: projectPrompt
