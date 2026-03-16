@@ -25,6 +25,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'code' | 'preview'>('code');
   const [isLoading, setIsLoading] = useState(false);
   const [buildStatus, setBuildStatus] = useState('');
+  const [lastFailedPrompt, setLastFailedPrompt] = useState<string | null>(null);
 
   const { webcontainer, bootError, retry: retryWebContainer } = useWebContainer();
   const toast = useToast();
@@ -43,6 +44,7 @@ function App() {
     setIsLoading(true);
     setSteps([]);
     setFiles([]);
+    setLastFailedPrompt(null);
     setBuildStatus('Starting generation...');
 
     try {
@@ -163,9 +165,21 @@ function App() {
     } catch (error: any) {
       console.error('❌ Error generating project:', error);
       setBuildStatus('');
+      setLastFailedPrompt(projectPrompt);
 
       const errMsg = error?.message || 'Unexpected error occurred';
-      toast.error(errMsg);
+      
+      // Provide more helpful error messages
+      let userMessage = errMsg;
+      if (errMsg.includes('500') || errMsg.includes('All models')) {
+        userMessage = 'AI models are temporarily unavailable. Please wait a moment and try again.';
+      } else if (errMsg.includes('API Key') || errMsg.includes('401')) {
+        userMessage = 'Backend API key issue. Please contact the administrator.';
+      } else if (errMsg.includes('timeout') || errMsg.includes('ECONNREFUSED')) {
+        userMessage = 'Backend server is not responding. It may be waking up — please try again in 30 seconds.';
+      }
+      
+      toast.error(userMessage);
     } finally {
       setIsLoading(false);
     }
@@ -232,6 +246,19 @@ function App() {
           <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100">
             <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
             <span className="text-xs text-blue-700 font-medium">{buildStatus}</span>
+          </div>
+        )}
+
+        {/* Retry Button */}
+        {lastFailedPrompt && !isLoading && (
+          <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-100">
+            <span className="text-xs text-red-600 font-medium flex-1">Generation failed. Click retry to try again.</span>
+            <button
+              onClick={() => generateProject(lastFailedPrompt)}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md font-medium transition-colors"
+            >
+              Retry
+            </button>
           </div>
         )}
 
