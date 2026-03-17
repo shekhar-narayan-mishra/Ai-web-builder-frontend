@@ -505,7 +505,7 @@ function createFileTree(files: FileItem[]): FileSystemTree {
   }
 
   // If no App found, check for index.html (vanilla site)
-  const htmlFile = fileMap.get('index.html') || fileMap.get('src/index.html');
+  const htmlFile = fileMap.get('index.html') || fileMap.get('src/index.html') || fileMap.get('public/index.html');
   if (!appContent && htmlFile) {
     // Vanilla HTML/CSS/JS — serve as-is
     return createVanillaFileTree(fileMap);
@@ -616,11 +616,18 @@ function createVanillaFileTree(fileMap: Map<string, FlatFile>): FileSystemTree {
     }
   };
 
-  // Mount all user files as-is
+  // Skip Node.js server files that would fail in WebContainer
+  const skipPatterns = /^(index\.js|server\.js|app\.js)$/;
+
+  // Mount all user files — flatten public/ contents to root level
   for (const [filePath, file] of fileMap) {
     if (filePath === 'package.json') continue;
     if (filePath.includes('node_modules')) continue;
-    insertFileIntoTree(tree, filePath.split('/'), file.content);
+    if (skipPatterns.test(filePath)) continue;
+    
+    // Flatten public/ directory contents to root so serve can find them
+    const normalizedPath = filePath.startsWith('public/') ? filePath.slice(7) : filePath;
+    insertFileIntoTree(tree, normalizedPath.split('/'), file.content);
   }
 
   return tree;
@@ -631,7 +638,7 @@ function createVanillaFileTree(fileMap: Map<string, FlatFile>): FileSystemTree {
  * - Remove import statements (React is loaded via CDN script tag)
  * - Remove export statements
  * - Convert `export default function X` to `function X`
- * - Strip TypeScript type annotations (basic)
+ * - Strip TypeScript type annotations comprehensively
  */
 function cleanComponentForCDN(code: string): string {
   return code
@@ -648,17 +655,40 @@ function cleanComponentForCDN(code: string): string {
       return match.replace('export ', '');
     })
     .replace(/export\s+\{[\s\S]*?\};?\s*$/gm, '')
-    // Strip basic TypeScript type annotations
-    .replace(/:\s*React\.FC\b/g, '')
-    .replace(/:\s*React\.ReactNode\b/g, '')
-    .replace(/<[A-Za-z]+\[\]>/g, '') // Array<Type>
-    .replace(/:\s*string\b/g, '')
-    .replace(/:\s*number\b/g, '')
-    .replace(/:\s*boolean\b/g, '')
-    .replace(/:\s*any\b/g, '')
-    .replace(/interface\s+\w+\s*\{[^}]*\}/g, '') // Remove interface declarations
-    .replace(/type\s+\w+\s*=\s*[^;]+;/g, '') // Remove type aliases
+    
+    // ── Comprehensive TypeScript stripping ──
+
+    // Remove multi-line interface declarations (including nested braces)
+    .replace(/interface\s+\w+(?:\s+extends\s+\w+)?\s*\{[^}]*\}/gs, '')
+    // Remove type alias declarations (single and multi-line)
+    .replace(/type\s+\w+\s*=\s*(?:\{[^}]*\}|[^;]+);/gs, '')
+
+    // Remove function return type annotations: ): JSX.Element { → ) {
+    .replace(/\)\s*:\s*[\w.<>\[\]|&\s]+\s*(?=\{|=>)/g, ') ')
+    // Remove typed destructured props: { x, y }: TypeName → { x, y }
+    .replace(/(\})\s*:\s*[A-Z]\w*(?:<[^>]*>)?/g, '$1')
+    // Remove typed function params: (param: Type) → (param)
+    .replace(/(\w)\s*:\s*(?:React\.)?[A-Z]\w*(?:<[^>]*>)?(?:\[\])?/g, '$1')
+    
+    // Remove generic type params on functions: function<T> → function
+    .replace(/<(?:[A-Z]\w*(?:\s*,\s*[A-Z]\w*)*(?:\s+extends\s+\w+)?)>/g, '')
+    // Remove generics on hooks: useState<string> → useState
+    .replace(/(useState|useRef|useMemo|useCallback|useReducer|useContext|Set|Map|Array|Record)\s*<[^>]+>/g, '$1')
+    
+    // Remove remaining basic type annotations: : string, : number, etc.
+    .replace(/:\s*React\.\w+(?:<[^>]*>)?/g, '')
+    .replace(/:\s*(?:string|number|boolean|any|void|never|undefined|null|object)(?:\[\])?\s*(?=[,;)=\n])/g, '')
+    
+    // Remove `as Type` assertions
+    .replace(/\s+as\s+(?:(?:React\.)?[A-Z]\w*(?:<[^>]*>)?|string|number|boolean|any|const)\b/g, '')
+    
+    // Remove non-null assertions: variable! → variable
+    .replace(/(\w)!/g, '$1')
+    
+    // Clean up empty lines left by removed code
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
     .trim();
+
 }
 
 function flattenFileItems(items: FileItem[], parentPath = ''): FlatFile[] {
