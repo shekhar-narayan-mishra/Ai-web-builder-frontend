@@ -19,7 +19,9 @@ export function Builder() {
   const [llmMessages, setLlmMessages] = useState<{role: "user" | "assistant", content: string;}[]>([]);
   const [loading, setLoading] = useState(false);
   const [templateSet, setTemplateSet] = useState(false);
-  const webcontainer = useWebContainer();
+  const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const { webcontainer, bootError: wcBootError, retry: wcRetry } = useWebContainer();
 
   const [currentStep, setCurrentStep] = useState(1);
   const [activeTab, setActiveTab] = useState<'code' | 'preview'>('code');
@@ -89,39 +91,49 @@ export function Builder() {
   }, [steps, files]);
 
   async function init() {
-    const response = await axios.post(`${BACKEND_URL}/template`, {
-      prompt: prompt.trim()
-    });
-    setTemplateSet(true);
-    
-    const {prompts, uiPrompts} = response.data;
-
-    setSteps(parseXml(uiPrompts[0]).map((x: Step) => ({
-      ...x,
-      status: "pending"
-    })));
-
+    setError(null);
+    setErrorDetails(null);
     setLoading(true);
-    const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
-      messages: [...prompts, prompt].map(content => ({
+
+    try {
+      const response = await axios.post(`${BACKEND_URL}/template`, {
+        prompt: prompt.trim()
+      });
+      setTemplateSet(true);
+      
+      const {prompts, uiPrompts} = response.data;
+
+      setSteps(parseXml(uiPrompts[0]).map((x: Step) => ({
+        ...x,
+        status: "pending"
+      })));
+
+      const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
+        messages: [...prompts, prompt].map(content => ({
+          role: "user",
+          content
+        }))
+      })
+
+      setLoading(false);
+
+      setSteps((current: Step[]) => [...current, ...parseXml(stepsResponse.data.response).map(x => ({
+        ...x,
+        status: "pending" as "pending"
+      }))]);
+
+      setLlmMessages([...prompts, prompt].map(content => ({
         role: "user",
         content
-      }))
-    })
+      })));
 
-    setLoading(false);
-
-    setSteps((current: Step[]) => [...current, ...parseXml(stepsResponse.data.response).map(x => ({
-      ...x,
-      status: "pending" as "pending"
-    }))]);
-
-    setLlmMessages([...prompts, prompt].map(content => ({
-      role: "user",
-      content
-    })));
-
-    setLlmMessages((current) => [...current, {role: "assistant", content: stepsResponse.data.response}])
+      setLlmMessages((current) => [...current, {role: "assistant", content: stepsResponse.data.response}]);
+    } catch (err: any) {
+      console.error("Initialization error:", err);
+      setError("Failed to initialize the builder. The AI service might be busy.");
+      setErrorDetails(err.response?.data?.details || err.message);
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -167,9 +179,30 @@ export function Builder() {
               </div>
             </div>
 
-            {/* Chat Input with modern design */}
+            {/* Chat Input or Error State */}
             <div className="bg-[#111111] rounded-xl border border-gray-800/50 p-4">
-              {(loading || !templateSet) ? (
+              {error ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center">
+                  <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+                    <span className="text-red-500 text-2xl font-bold">!</span>
+                  </div>
+                  <h3 className="text-white font-medium mb-1">Initialization Failed</h3>
+                  <p className="text-gray-500 text-xs mb-4 max-w-[200px]">
+                    {error}
+                  </p>
+                  {errorDetails && (
+                    <div className="bg-red-500/5 border border-red-500/10 rounded-md p-2 mb-4 w-full">
+                       <p className="text-[10px] text-red-400 font-mono break-all">{errorDetails}</p>
+                    </div>
+                  )}
+                  <button 
+                    onClick={init}
+                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm transition-all"
+                  >
+                    Retry Build
+                  </button>
+                </div>
+              ) : (loading || !templateSet) ? (
                 <div className="flex flex-col items-center justify-center py-8">
                   <Loader />
                   <p className="text-gray-500 text-sm mt-4 animate-pulse">
@@ -196,22 +229,28 @@ export function Builder() {
                       };
 
                       setLoading(true);
-                      const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
-                        messages: [...llmMessages, newMessage]
-                      });
-                      setLoading(false);
+                      try {
+                        const stepsResponse = await axios.post(`${BACKEND_URL}/chat`, {
+                          messages: [...llmMessages, newMessage]
+                        });
+                        setLoading(false);
 
-                      setLlmMessages((current) => [...current, newMessage]);
-                      setLlmMessages((current) => [...current, {
-                        role: "assistant",
-                        content: stepsResponse.data.response
-                      }]);
-                      
-                      setSteps((currentSteps: Step[]) => [...currentSteps, ...parseXml(stepsResponse.data.response).map(x => ({
-                        ...x,
-                        status: "pending" as "pending"
-                      }))]);
-                      setPrompt("");
+                        setLlmMessages((current) => [...current, newMessage]);
+                        setLlmMessages((current) => [...current, {
+                          role: "assistant",
+                          content: stepsResponse.data.response
+                        }]);
+                        
+                        setSteps((currentSteps: Step[]) => [...currentSteps, ...parseXml(stepsResponse.data.response).map(x => ({
+                          ...x,
+                          status: "pending" as "pending"
+                        }))]);
+                        setPrompt("");
+                      } catch (err: any) {
+                        console.error("Chat error:", err);
+                        alert("Chat failed. Please try again.");
+                        setLoading(false);
+                      }
                     }}
                     disabled={!userPrompt.trim()}
                     className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-medium py-2.5 px-4 rounded-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-purple-500/25"
@@ -238,7 +277,12 @@ export function Builder() {
               {activeTab === 'code' ? (
                 <CodeEditor file={selectedFile} />
               ) : (
-                <PreviewFrame webContainer={webcontainer} files={files} />
+                <PreviewFrame 
+                  webContainer={webcontainer} 
+                  files={files} 
+                  bootError={wcBootError}
+                  onRetry={wcRetry}
+                />
               )}
             </div>
           </div>
