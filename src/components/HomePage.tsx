@@ -117,7 +117,7 @@ export function HomePage({ onProjectSelect, onGetStarted }: HomePageProps) {
               <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
             </button>
             <button
-              onClick={() => onProjectSelect("Create a modern portfolio website with hero section and projects showcase")}
+              onClick={() => onProjectSelect("Create a simple landing page with a hero section")}
               className="text-gray-600 hover:text-gray-900 px-6 py-3 rounded-xl font-medium text-[15px] hover:bg-gray-50 transition-all"
             >
               Try an example
